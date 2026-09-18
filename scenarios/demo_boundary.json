@@ -1,0 +1,28 @@
+{
+  "id": "demo_boundary",
+  "name": "边界识别（boundary）",
+  "dimension": "boundary",
+  "seed": 17,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-with-token",
+      "description": "注入长期服务器配置与一次性的临时口令",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "10.0.0.5", "port": "2222"}},
+        {"id": "tmp_ssh_token", "fields": {"ssh_token": "tkA7x1Q"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-connect",
+      "description": "连接生产服务器进行日常检查，临时口令不应被继续复用",
+      "expected": {"server_ip": "10.0.0.5"}
+    }
+  ]
+}

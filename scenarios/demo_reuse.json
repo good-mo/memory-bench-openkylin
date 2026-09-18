@@ -1,0 +1,38 @@
+{
+  "id": "demo_reuse",
+  "name": "任务复用（task-reuse）",
+  "dimension": "task-reuse",
+  "seed": 19,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-reuse",
+      "description": "注入服务器全套配置供后续多个任务复用",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "192.168.2.10", "port": "2222", "ssh_user": "openkylin", "deploy_root": "/srv/app"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-deploy",
+      "description": "连接服务器并准备把代码部署到 deploy_root",
+      "expected": {"server_ip": "192.168.2.10", "port": "2222"}
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ps",
+      "description": "查看系统进程"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-report",
+      "description": "再次连接服务器并生成部署清单",
+      "expected": {"server_ip": "192.168.2.10"}
+    }
+  ]
+}

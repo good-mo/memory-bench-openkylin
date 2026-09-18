@@ -1,0 +1,5 @@
+out/
+*.ndjson
+*.db
+__pycache__/
+*.pyc

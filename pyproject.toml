@@ -1,0 +1,8 @@
+[project]
+name = "memory-bench-openkylin"
+version = "0.1.0"
+description = "openKylin 智能体长期记忆自动化评测 Benchmark（M1 骨架）"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+py-modules = []

@@ -1,0 +1,28 @@
+{
+  "id": "demo_near",
+  "name": "相近区分（near-distinguish）",
+  "dimension": "near-distinguish",
+  "seed": 13,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-near",
+      "description": "注入生产与预发两套相近的服务器配置",
+      "facts": [
+        {"id": "prod_cfg", "fields": {"server_ip": "192.168.1.100", "port": "22"}},
+        {"id": "staging_cfg", "fields": {"staging_ip": "192.168.1.101", "port": "2222"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-archive",
+      "description": "把桌面上传的文件归档"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-prod",
+      "description": "连接生产服务器并部署，务必使用 server_ip",
+      "expected": {"server_ip": "192.168.1.100"}
+    }
+  ]
+}

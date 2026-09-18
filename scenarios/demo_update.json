@@ -1,0 +1,35 @@
+{
+  "id": "demo_update",
+  "name": "动态更新服务器配置（dynamic-update）",
+  "dimension": "dynamic-update",
+  "seed": 7,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-server",
+      "description": "注入服务器连接配置",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "192.168.1.100", "port": "22"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录"
+    },
+    {
+      "type": "UPDATE",
+      "name": "update-server",
+      "description": "部分更新服务器配置（ip 与端口同时变更）",
+      "facts": [
+        {"id": "server_cfg_new", "fields": {"server_ip": "192.168.2.50", "port": "2222"}}
+      ]
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-connect",
+      "description": "连接服务器并报告，使用最新配置",
+      "expected": {"server_ip": "192.168.2.50", "port": "2222"}
+    }
+  ]
+}

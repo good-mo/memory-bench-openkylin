@@ -1,0 +1,28 @@
+{
+  "id": "demo_retention",
+  "name": "长期保留偏好（retention）",
+  "dimension": "retention",
+  "seed": 42,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-preference",
+      "description": "注入用户两条长期偏好",
+      "facts": [
+        {"id": "editor_pref", "fields": {"editor": "vim"}},
+        {"id": "download_dir", "fields": {"download_dir": "~/Downloads"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-archive",
+      "description": "把桌面上传的文件归档"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-organize",
+      "description": "执行组织代码目录的整理，按用户偏好把代码归档到下载目录",
+      "expected": {"download_dir": "~/Downloads"}
+    }
+  ]
+}

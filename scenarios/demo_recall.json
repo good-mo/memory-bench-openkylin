@@ -1,0 +1,38 @@
+{
+  "id": "demo_recall",
+  "name": "记忆调用（memory-recall）",
+  "dimension": "memory-recall",
+  "seed": 11,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-server",
+      "description": "注入服务器连接配置",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "192.168.1.100", "port": "22"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-ping1",
+      "description": "连接服务器并确认服务器地址",
+      "expected": {"server_ip": "192.168.1.100", "port": "22"}
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ps",
+      "description": "查看系统进程"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-ping2",
+      "description": "间隔多个任务后再次连接服务器确认地址",
+      "expected": {"server_ip": "192.168.1.100"}
+    }
+  ]
+}
