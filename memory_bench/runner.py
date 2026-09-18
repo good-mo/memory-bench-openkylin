@@ -21,6 +21,7 @@ _BUILTIN = [
     "demo_near",
     "demo_boundary",
     "demo_reuse",
+    "demo_privacy_constraint",
 ]
 
 
@@ -58,7 +59,19 @@ def make_agent(name: str, seed: int):
         from agents.dummy_agent import LeakyDummyAgent
 
         return LeakyDummyAgent(seed=seed)
-    raise SystemExit("未知智能体 {!r}：可选 dummy / bad / confuse / leaky".format(name))
+    if name == "deepseek":
+        from agents.deepseek_agent import DeepSeekAgent
+
+        return DeepSeekAgent(seed=seed)
+    if name == "adapter":
+        from agents.adapter_agent import AdapterAgent
+
+        return AdapterAgent(seed=seed)
+    raise SystemExit(
+        "未知智能体 {!r}：可选 dummy / bad / confuse / leaky / deepseek / adapter".format(
+            name
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +109,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("证据总数：{}  按类型：{}".format(
         result.summary["ev_total"], result.summary["ev_by_type"]
     ))
-    print("一致性检查：PASS={} FAIL={} WARN={}".format(
+    print("一致性检查：PASS={} FAIL={} WARN={} N/A={}".format(
         result.summary["checks_pass"],
         result.summary["checks_fail"],
         result.summary["checks_warn"],
+        result.summary["checks_na"],
     ))
     for check in result.checks:
         print("  [{}] {} {}".format(
@@ -150,8 +164,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="demo_retention",
         help="内置场景 demo_retention / demo_update，或 JSON 文件路径",
     )
-    p_run.add_argument("--agent", default="dummy", choices=["dummy", "bad", "confuse", "leaky"],
-                       help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）")
+    p_run.add_argument("--agent", default="dummy", choices=["dummy", "bad", "confuse", "leaky", "deepseek", "adapter"],
+                       help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）/ deepseek（真实 LLM）/ adapter（外部智能体，通过 MB_ADAPTER_* 环境变量配置后端）")
     p_run.add_argument("--seed", type=int, default=42, help="随机种子")
     p_run.add_argument("--outdir", default=None, help="输出目录（默认 out/<scenario_id>）")
     p_run.add_argument("--workspace", default=None, help="工作区目录")

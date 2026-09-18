@@ -15,6 +15,8 @@ RUNNERS=(
   "demo_boundary dummy"
   "demo_boundary leaky"
   "demo_reuse dummy"
+  "demo_privacy_constraint dummy"
+  "demo_privacy_constraint leaky"
 )
 
 if [ "${1:-}" != "--keep-out" ]; then
@@ -39,7 +41,7 @@ for pair in "${RUNNERS[@]}"; do
 done
 
 echo
-echo "==== 六维矩阵汇总（PASS/FAIL/WARN）====" | tee -a "$LOG"
+echo "==== 六维矩阵汇总（PASS/FAIL/WARN/N/A）====" | tee -a "$LOG"
 python3 - <<'PY' >> "$LOG" 2>&1
 import glob
 import json
@@ -64,10 +66,12 @@ ORDER = [
     ("demo_boundary", "dummy", "边界识别"),
     ("demo_boundary", "leaky", "边界识别(坏变体)"),
     ("demo_reuse", "dummy", "任务复用"),
+    ("demo_privacy_constraint", "dummy", "隐私边界"),
+    ("demo_privacy_constraint", "leaky", "隐私边界(坏变体)"),
 ]
 
-header = "{:<22} {:<14} {:>6} {:>6} {:>6}  {}".format(
-    "场景/智能体", "维度", "PASS", "FAIL", "WARN", "说明")
+header = "{:<22} {:<14} {:>6} {:>6} {:>6} {:>6}  {}".format(
+    "场景/智能体", "维度", "PASS", "FAIL", "WARN", "N/A", "说明")
 print(header)
 print("-" * len(header))
 for sid, agent, label in ORDER:
@@ -76,7 +80,7 @@ for sid, agent, label in ORDER:
         print("{:<22} {:<14} 无报告".format(sid + "/" + agent, label))
         continue
     checks = data.get("consistency", [])
-    stat = {"PASS": 0, "FAIL": 0, "WARN": 0}
+    stat = {"PASS": 0, "FAIL": 0, "WARN": 0, "N/A": 0}
     for c in checks:
         stat[c["status"]] = stat.get(c["status"], 0) + 1
     note = ""
@@ -84,9 +88,12 @@ for sid, agent, label in ORDER:
         if c["status"] == "FAIL":
             note = c["message"]
             break
+    if c["status"] in ("FAIL",) and note == "":
+        note = ""
     note = note if len(note) <= 40 else note[:40] + "…"
-    print("{:<22} {:<14} {:>6} {:>6} {:>6}  {}".format(
-        sid + "/" + agent, label, stat["PASS"], stat["FAIL"], stat["WARN"], note))
+    print("{:<22} {:<14} {:>6} {:>6} {:>6} {:>6}  {}".format(
+        sid + "/" + agent, label, stat["PASS"], stat["FAIL"], stat["WARN"],
+        stat["N/A"], note))
 PY
 
 echo

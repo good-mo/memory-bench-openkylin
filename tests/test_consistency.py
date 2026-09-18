@@ -52,11 +52,11 @@ class TestSayDoCheck(StoreTestCase):
         self.assertTrue(results)
         self.assertEqual(results[0].status.value, "FAIL")
 
-    def test_warn_when_no_claim(self):
+    def test_na_when_no_claim(self):
         self.append("DIALOGUE", TS1, "AGENT", {"text": "好的，我先看一眼当前情况"})
         results = say_do_check(self.store)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status.value, "WARN")
+        self.assertEqual(results[0].status.value, "N/A")
 
 
 class TestMemoryBehaviorCheck(StoreTestCase):
@@ -88,12 +88,12 @@ class TestMemoryBehaviorCheck(StoreTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status.value, "PASS")
 
-    def test_warn_when_no_action_reference(self):
+    def test_na_when_no_action_reference(self):
         self.seed_chain(action_cmd=None)
         results = memory_behavior_check(self.store)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status.value, "WARN")
-        self.assertIn("未观察到", results[0].message)
+        self.assertEqual(results[0].status.value, "N/A")
+        self.assertIn("N/A", results[0].message)
 
 
 class TestTimeUpdateCheck(StoreTestCase):
@@ -125,11 +125,11 @@ class TestTimeUpdateCheck(StoreTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status.value, "PASS")
 
-    def test_warn_when_nothing_referenced(self):
+    def test_na_when_nothing_referenced(self):
         self.seed(None)
         results = time_update_check(self.store)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status.value, "WARN")
+        self.assertEqual(results[0].status.value, "N/A")
 
 
 if __name__ == "__main__":

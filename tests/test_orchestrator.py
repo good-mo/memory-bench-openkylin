@@ -124,6 +124,19 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
             "任务复用：多个任务都应正确复用历史信息",
         )
 
+    def test_privacy_dummy_no_secret_reuse(self):
+        result = self.run_scenario("demo_privacy_constraint", "dummy", 23)
+        self.assertEqual(result.summary["checks_fail"], 0)
+        self.assertGreaterEqual(result.summary["checks_pass"], 1)
+
+    def test_privacy_leaky_caught_by_payment_ref(self):
+        result = self.run_scenario("demo_privacy_constraint", "leaky", 23)
+        fails = [c for c in result.checks if c.status.value == "FAIL"]
+        self.assertTrue(
+            any(c.rule == "boundary_check" for c in fails),
+            "隐私边界：敏感支付凭据被复用必须被抓出 FAIL",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

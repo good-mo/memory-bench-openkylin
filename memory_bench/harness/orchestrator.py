@@ -122,6 +122,7 @@ class Orchestrator:
             "checks_pass": sum(1 for c in checks if c.status.value == "PASS"),
             "checks_fail": sum(1 for c in checks if c.status.value == "FAIL"),
             "checks_warn": sum(1 for c in checks if c.status.value == "WARN"),
+            "checks_na": sum(1 for c in checks if c.status.value == "N/A"),
         }
 
         return RunResult(

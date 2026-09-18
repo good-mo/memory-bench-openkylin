@@ -19,6 +19,7 @@ class Status(enum.Enum):
     PASS = "PASS"
     FAIL = "FAIL"
     WARN = "WARN"
+    NA = "N/A"
 
 
 @dataclass
@@ -48,21 +49,48 @@ def _event_text(event: EvidenceEvent) -> str:
     return json.dumps(event.content, ensure_ascii=False)
 
 
+def _normalize_value(value: str) -> str:
+    """值语义归一（保守）：去首尾空白、纯数字去前导零、路径剥尾部斜杠。
+
+    用于缓解「同一事实、不同写法」导致的语义偏移误报，例如：
+      - 端口 "0022" 与 "22"；
+      - 路径 "/home/u/app/" 与 "/home/u/app"。
+    不做大小写归一（Linux 路径大小写敏感），不做用户主目录展开
+    （`~` 与 `/home/<user>` 的等价需上下文知识，留作已知边界）。
+    """
+    v = value.strip()
+    if not v:
+        return v
+    if re.fullmatch(r"0*\d+", v) and int(v) > 0:
+        return str(int(v))
+    return v.rstrip("/")
+
+
 def _mentions(text: str, value: str) -> bool:
-    """判断文本里是否「引用了」value（词边界式判定）。
+    """判断文本里是否「引用了」value（词边界 + 轻量语义归一）。
 
     对值 v 构造 re.escape(v)，要求其前后都不是数字/字母/下划线，
     因此：
       - "22" 不会误命中 "2222"（后随数字）；
       - "192.168.1.10" 不会误命中 "192.168.1.100"（前后边界阻断）；
-      - "192.168.1.100" 与 "192.168.2.50" 本身互非子串，天然互不误判。
+    text 与 value 均先做轻量归一（零填充端口、尾部斜杠），缓解同义改写误报。
     """
     if not value:
         return False
-    pattern = re.compile(
-        r"(?<![0-9A-Za-z_])" + re.escape(value) + r"(?![0-9A-Za-z_])"
-    )
-    return pattern.search(text) is not None
+    text_candidates = [text, _normalize_value(text)]
+    value_candidates = [value, _normalize_value(value)]
+    for tv in text_candidates:
+        if not tv:
+            continue
+        for vv in value_candidates:
+            if not vv:
+                continue
+            pattern = re.compile(
+                r"(?<![0-9A-Za-z_])" + re.escape(vv) + r"(?![0-9A-Za-z_])"
+            )
+            if pattern.search(tv) is not None:
+                return True
+    return False
 
 
 def _normalize_path(p: str) -> str:
@@ -218,9 +246,9 @@ def say_do_check(
     if not found_any:
         results.append(
             CheckResult(
-                status=Status.WARN,
+                status=Status.NA,
                 rule="say_do_check",
-                message="未观察到任何「已Xxx」形式的说—做声明",
+                message="未观察到「已Xxx」形式的声明，说—做一致性无法验证（N/A）",
             )
         )
     return results
@@ -275,9 +303,11 @@ def memory_behavior_check(
         else:
             results.append(
                 CheckResult(
-                    status=Status.WARN,
+                    status=Status.NA,
                     rule="memory_behavior_check",
-                    message="未观察到对记忆值 {} 的行为引用".format(new_value),
+                    message="记忆键 {} 更新后未观察到任何行为引用，无法验证（N/A）".format(
+                        new_value
+                    ),
                     evidence_ids=[update_ev_id],
                 )
             )
@@ -296,9 +326,9 @@ def time_update_check(
     if not changes:
         return [
             CheckResult(
-                status=Status.WARN,
+                status=Status.NA,
                 rule="time_update_check",
-                message="未观察到任何记忆更新链",
+                message="场景不含记忆更新链，时间—更新一致性不适用（N/A）",
             )
         ]
 
@@ -332,9 +362,9 @@ def time_update_check(
         elif stale_count == 0 and fresh_count == 0:
             results.append(
                 CheckResult(
-                    status=Status.WARN,
+                    status=Status.NA,
                     rule="time_update_check",
-                    message="记忆键 {} 更新后没有任何行为引用该值（stale=0, fresh=0）".format(
+                    message="记忆键 {} 更新后没有任何行为引用该值（stale=0, fresh=0，N/A）".format(
                         key
                     ),
                     evidence_ids=[update_ev_id],
@@ -563,9 +593,17 @@ def run_all(
 
 
 def summarize(checks: List[CheckResult]) -> Dict[str, int]:
-    """统计 PASS / FAIL / WARN 数量。"""
-    summary = {"checks_pass": 0, "checks_fail": 0, "checks_warn": 0}
+    """统计 PASS / FAIL / WARN / N/A 数量。"""
+    summary = {
+        "checks_pass": 0,
+        "checks_fail": 0,
+        "checks_warn": 0,
+        "checks_na": 0,
+    }
     for c in checks:
+        if c.status == Status.NA:
+            summary["checks_na"] += 1
+            continue
         key = "checks_{}".format(c.status.value.lower())
         if key in summary:
             summary[key] += 1
