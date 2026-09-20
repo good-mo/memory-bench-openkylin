@@ -23,10 +23,12 @@ def run_single(
     store: EvidenceStore,
     workspace: str,
     seed: int,
+    audit_collector: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """用指定 seed 运行一次场景×智能体，返回 {checks, summary}。
 
     agent 传已实例化的智能体；workspace 传目录路径。seed 仅用于确定性。
+    audit_collector 可选：OS 审计采集器（见 Orchestrator）。
     """
     from memory_bench.harness.orchestrator import Orchestrator
 
@@ -36,6 +38,7 @@ def run_single(
         store=store,
         workspace=workspace,
         seed=seed,
+        audit_collector=audit_collector,
     ).run()
     return {
         "seed": seed,
@@ -51,24 +54,37 @@ def run_seed_matrix(
     outdir: str = "out/bench",
     seeds_callback: Optional[Any] = None,
     agent_name: str = "agent",
+    audit_sources: Optional[List[str]] = None,
+    audit_replay: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """按 seed 列表重复运行同一场景×智能体，输出到 outdir/<id>__<agent>/seed-<n>/。
 
     每个 seed 使用独立 store（NDJSON + sqlite）与独立 workspace，互不干扰。
     返回全部 seed 的运行结果（含 summary / checks / report 路径）。
+    audit_sources / audit_replay 非空时，每个 seed 挂载 OS 审计采集器。
     """
+    from memory_bench.runner import build_audit_collector
+
     results: List[Dict[str, Any]] = []
     for seed in seeds:
         run_dir = os.path.join(outdir, "{}__{}".format(scenario.id, agent_name), "seed-{}".format(seed))
         os.makedirs(run_dir, exist_ok=True)
         store = EvidenceStore(os.path.join(run_dir, "evidence.ndjson"))
         agent = agent_factory(seed=seed)
+        workspace = os.path.join(run_dir, "workspace")
+        audit_collector = build_audit_collector(
+            store=store,
+            audit_flag=",".join(audit_sources) if audit_sources else "",
+            replay=audit_replay,
+            workspace=workspace,
+        )
         run = run_single(
             scenario=scenario,
             agent=agent,
             store=store,
-            workspace=os.path.join(run_dir, "workspace"),
+            workspace=workspace,
             seed=seed,
+            audit_collector=audit_collector,
         )
         run["outdir"] = run_dir
         results.append(run)

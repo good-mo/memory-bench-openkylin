@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from memory_bench.evidence.consistency import CheckResult, run_all
 from memory_bench.evidence.model import EvidenceEvent, EvidenceType, Source, now_utc
@@ -33,7 +33,12 @@ class RunResult:
 
 
 class Orchestrator:
-    """场景编排器：注入 → 演化（干扰/更新）→ 探针 → 固化。"""
+    """场景编排器：注入 → 演化（干扰/更新）→ 探针 → 固化。
+
+    audit_collector 可选：每次智能体 act 之后（以及场景结束时）采集一次
+    OS 审计证据（journal / 进程 / 工作区文件差异），与智能体主动 emit 的
+    证据写入同一 store，实现「智能体自证 ↔ OS 客观证据」交叉印证。
+    """
 
     def __init__(
         self,
@@ -42,6 +47,7 @@ class Orchestrator:
         store: EvidenceStore,
         workspace: Path,
         seed: int = 0,
+        audit_collector: Optional["Any"] = None,
     ):
         self.scenario = scenario
         self.agent = agent
@@ -49,6 +55,7 @@ class Orchestrator:
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.seed = seed
+        self.audit_collector = audit_collector
 
     def run(self) -> RunResult:
         """按步骤执行场景并固化证据与报告。
@@ -130,9 +137,14 @@ class Orchestrator:
                     source=Source.USER,
                 )
                 self.agent.act(ctx, user_message, step.name)
+                if self.audit_collector is not None:
+                    self.audit_collector.collect(session=session, task=step.name)
 
         if has_sessions:
             self.agent.save_state(ctx, session)
+
+        if self.audit_collector is not None:
+            self.audit_collector.collect(session=session, task="scenario_end")
 
         self._emit(
             ctx,
@@ -146,7 +158,12 @@ class Orchestrator:
         # 报告输出到 NDJSON 同级目录
         outdir = str(Path(self.store.path).parent)
         report_paths = build_report(
-            store=self.store, checks=checks, scenario=self.scenario, outdir=outdir
+            store=self.store,
+            checks=checks,
+            scenario=self.scenario,
+            outdir=outdir,
+            agent_name=self.agent.name,
+            seed=self.seed,
         )
 
         all_events = self.store.query()

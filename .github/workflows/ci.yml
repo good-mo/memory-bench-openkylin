@@ -30,7 +30,43 @@ jobs:
         run: |
           python -m memory_bench.runner bench --scenario demo_recall --agent dummy --seeds 1,2,3 --outdir out/ci-bench
 
+      - name: OS 审计采集层演示（journal + 进程 + 工作区文件差异）
+        run: |
+          python -m memory_bench.runner run --scenario demo_update --agent dummy \
+            --audit journal,process,filesystem --seed 7 --outdir out/ci-audit
+          grep -c '"audit_backend"' out/ci-audit/evidence.ndjson
+
+      - name: openKylin 适配器演示（CLI + MB 协议 + 审计联动）
+        run: |
+          cat > /tmp/ok_agent.py <<'EOF'
+          import json, sys
+          msg = sys.stdin.read().strip()
+          if "\u8bb0\u4f4f" in msg:
+              key, value = msg.split("\u8bb0\u4f4f")[1].strip().split("=", 1)
+              print("MB|MEMORY|" + json.dumps({"op": "WRITE", "key": key.strip(), "value": value.strip()}))
+              print("MB|DIALOGUE|" + json.dumps({"text": "\u597d\u7684\uff0c\u5df2\u8bb0\u4f4f"}))
+          else:
+              print("MB|DIALOGUE|" + json.dumps({"text": "\u6536\u5230"}))
+          EOF
+          export MK_OK_BACKEND=process
+          export MK_OK_CMD="python3 /tmp/ok_agent.py"
+          export MK_OK_MODE=mb
+          python -m memory_bench.runner run --scenario demo_update --agent openkylin \
+            --seed 7 --outdir out/ci-openkylin
+          test -f out/ci-openkylin/evidence.ndjson
+
+      - name: 遗忘指令 + openKylin 配置场景演示（多维评分 + manifest 追踪）
+        run: |
+          python -m memory_bench.runner run --scenario demo_forget --agent forget --seed 41 --outdir out/ci-forget
+          python -m memory_bench.runner run --scenario demo_forget --agent ignoreforget --seed 41 --outdir out/ci-ignoreforget
+          python -m memory_bench.runner run --scenario demo_ok_config --agent okconfig --seed 43 --outdir out/ci-okconfig
+          python -m memory_bench.runner run --scenario demo_ok_config --agent okamnesia --seed 43 --outdir out/ci-okamnesia
+          test -f out/ci-forget/manifest.json
+          test -f out/ci-okconfig/report.json
+          grep -q '"scoring"' out/ci-okconfig/report.json
+
       - name: 校验跑批摘要包含全部场景
         run: |
           test -f out/run_matrix.log
-          grep -q "六维矩阵汇总" out/run_matrix.log
+          grep -q "维度矩阵汇总" out/run_matrix.log
+          grep -q "demo_ok_config/okconfig" out/run_matrix.log

@@ -369,6 +369,97 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         ],
     )
 
+    forget = Scenario(
+        id="demo_forget",
+        name="遗忘指令执行（memory-forget）",
+        dimension="memory-forget",
+        seed=41,
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-with-token",
+                description="注入服务器配置与一次性的临时 API 令牌",
+                facts=[
+                    Fact(
+                        id="server_cfg",
+                        fields={"server_ip": "10.9.9.9", "port": "2222"},
+                    ),
+                    Fact(id="tmp_api_token", fields={"tmp_api_token": "tkForget1"}),
+                ],
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-ls",
+                description="查看当前目录",
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="forget-token",
+                description="用户明确要求：请忘记临时 API 令牌 tkForget1，不要再保留、不要再使用它",
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-ps",
+                description="查看系统进程",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-connect",
+                description="连接服务器进行例行检查，临时令牌不应被继续复用",
+                expected={"server_ip": "10.9.9.9"},
+            ),
+        ],
+    )
+
+    okconfig = Scenario(
+        id="demo_ok_config",
+        name="openKylin 系统配置记忆（openkylin-config）",
+        dimension="openkylin-config",
+        seed=43,
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-day1",
+                description="第一天：记录 openKylin 系统的软件源、SSH 端口与桌面主题偏好",
+                session="day1",
+                facts=[
+                    Fact(
+                        id="ok_mirror",
+                        fields={"apt_mirror": "https://mirrors.openkylin.top"},
+                    ),
+                    Fact(id="ok_ssh", fields={"ssh_port": "8822"}),
+                    Fact(id="ok_theme", fields={"ukui_theme": "ukui-dark"}),
+                ],
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-day1",
+                description="第一天：查看系统启动日志（无关任务）",
+                session="day1",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-day2-mirror",
+                description="第二天：为系统配置软件源并连接 SSH 服务，配置来自昨天的记录",
+                session="day2",
+                expected={"apt_mirror": "https://mirrors.openkylin.top", "ssh_port": "8822"},
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-day2",
+                description="第二天：查看用户目录（无关任务）",
+                session="day2",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-day3-theme",
+                description="第三天：把桌面主题恢复为用户喜好的主题",
+                session="day3",
+                expected={"ukui_theme": "ukui-dark"},
+            ),
+        ],
+    )
+
     return {
         "demo_retention": retention,
         "demo_update": update,
@@ -380,4 +471,6 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         "demo_persist": persist,
         "demo_rollback": rollback,
         "demo_crossfile": crossfile,
+        "demo_forget": forget,
+        "demo_ok_config": okconfig,
     }

@@ -1,6 +1,7 @@
 """CLI 入口：`python3 -m memory_bench.runner run ...` / `serve ...`。"""
 
 import argparse
+import json
 import os
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,8 @@ _BUILTIN = [
     "demo_persist",
     "demo_rollback",
     "demo_crossfile",
+    "demo_forget",
+    "demo_ok_config",
 ]
 
 
@@ -94,9 +97,30 @@ def make_agent(name: str, seed: int):
         from agents.dummy_agent import DirtyFileDummyAgent
 
         return DirtyFileDummyAgent(seed=seed)
+    if name == "forget":
+        from agents.dummy_agent import ForgetDummyAgent
+
+        return ForgetDummyAgent(seed=seed)
+    if name == "ignoreforget":
+        from agents.dummy_agent import IgnoreForgetDummyAgent
+
+        return IgnoreForgetDummyAgent(seed=seed)
+    if name == "okconfig":
+        from agents.dummy_agent import OkConfigDummyAgent
+
+        return OkConfigDummyAgent(seed=seed)
+    if name == "okamnesia":
+        from agents.dummy_agent import OkConfigAmnesiaDummyAgent
+
+        return OkConfigAmnesiaDummyAgent(seed=seed)
+    if name == "openkylin":
+        from agents.openkylin_adapter import OpenKylinAgent
+
+        return OpenKylinAgent(seed=seed)
     raise SystemExit(
         "未知智能体 {!r}：可选 dummy / bad / confuse / leaky / deepseek / adapter"
-        " / sessiondummy / amnesia / rollback / norollback / crossfile / dirtyfile".format(
+        " / sessiondummy / amnesia / rollback / norollback / crossfile / dirtyfile"
+        " / forget / ignoreforget / okconfig / okamnesia / openkylin".format(
             name
         )
     )
@@ -105,6 +129,53 @@ def make_agent(name: str, seed: int):
 # ---------------------------------------------------------------------------
 # run 子命令
 # ---------------------------------------------------------------------------
+
+
+def build_audit_collector(store, audit_flag, replay, workspace):
+    """根据 --audit 参数构造 OS 审计采集器；未启用返回 None。
+
+    audit_flag: 逗号分隔的审计源（journal / process / filesystem / replay）。
+    replay: 可选离线审计流 NDJSON 文件路径（--audit-replay）。
+    """
+    if not audit_flag and not replay:
+        return None
+    from memory_bench.audit import AuditCollector
+    from memory_bench.audit.sources import (
+        AuditdSource,
+        FileSystemDiffSource,
+        JournalSource,
+        NdjsonReplaySource,
+        ProcessSource,
+    )
+
+    enabled = {s.strip() for s in (audit_flag or "").split(",") if s.strip()}
+    if not enabled and replay:
+        enabled = {"replay"}
+
+    collector = AuditCollector(store)
+    has_source = False
+
+    def _activate(source):
+        nonlocal has_source
+        if isinstance(source, FileSystemDiffSource):
+            source.begin()
+        collector.add_source(source)
+        has_source = True
+
+    if "journal" in enabled:
+        _activate(JournalSource(since=None, lines=300))
+    if "auditd" in enabled:
+        _activate(AuditdSource())
+    if "process" in enabled:
+        _activate(ProcessSource())
+    if "filesystem" in enabled:
+        _activate(FileSystemDiffSource(workspace))
+    if "replay" in enabled:
+        _activate(NdjsonReplaySource(replay))
+    if not has_source:
+        return None
+    return collector
+
 
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = load_scenario_with_fallback(args.scenario)
@@ -121,6 +192,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     store = EvidenceStore(os.path.join(outdir, "evidence.ndjson"))
     agent = make_agent(args.agent, args.seed)
+    audit_collector = build_audit_collector(
+        store=store,
+        audit_flag=args.audit,
+        replay=args.audit_replay,
+        workspace=workspace,
+    )
 
     result = Orchestrator(
         scenario=scenario,
@@ -128,9 +205,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         store=store,
         workspace=Path(workspace),
         seed=args.seed,
+        audit_collector=audit_collector,
     ).run()
 
-    print("== memory-bench-openkylin M1 ==")
+    print("== memory-bench-openkylin M2 ==")
     print("场景：{}（维度：{}） 智能体：{}  seed={}".format(
         scenario.name, scenario.dimension, agent.name, args.seed
     ))
@@ -147,6 +225,26 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("  [{}] {} {}".format(
             check.status.value, check.rule, check.message
         ))
+
+    from memory_bench.report.scoring import build_scoring, format_scoring
+
+    print("\n---- 多维能力评分 ----")
+    print(format_scoring(build_scoring(result.checks, scenario.dimension)))
+
+    manifest_path = os.path.join(outdir, "manifest.json")
+    if os.path.isfile(manifest_path):
+        with open(manifest_path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        print("\n---- 评测追踪 ----")
+        print("run_id：{}".format(manifest.get("run_id")))
+        print("可复现指纹：{}".format(manifest.get("repro_fingerprint")))
+        env = manifest.get("env", {})
+        print("环境：{}｜git={}（{}）".format(
+            env.get("python"),
+            env.get("git_commit"),
+            "dirty" if env.get("git_dirty") else "clean",
+        ))
+
     print("报告 HTML：{}".format(result.report_paths.get("html")))
     print("证据 NDJSON：{}".format(result.store_path))
     return 0
@@ -171,12 +269,15 @@ def cmd_bench(args: argparse.Namespace) -> int:
         return make_agent(args.agent, seed)
 
     outdir = args.outdir if args.outdir else "out/bench"
+    audit_sources = [s.strip() for s in args.audit.split(",") if s.strip()] or None
     results = run_seed_matrix(
         scenario=scenario,
         agent_factory=factory,
         seeds=seeds,
         outdir=outdir,
         agent_name=args.agent,
+        audit_sources=audit_sources,
+        audit_replay=args.audit_replay,
     )
     aggregate = aggregate_matrix(results)
     matrix_path = write_matrix_summary(outdir, aggregate)
@@ -197,6 +298,23 @@ def cmd_bench(args: argparse.Namespace) -> int:
         print("  {:<32} 主状态={:<6} 稳定率={:.3f} 分布={}".format(
             rule, info["dominant"], info["stability"], info["distribution"]
         ))
+
+    import glob as _glob
+
+    print("\n---- 评测追踪（逐 seed manifest）----")
+    for manifest_path in sorted(
+        _glob.glob(os.path.join(outdir, "*__*", "seed-*", "manifest.json"))
+    ):
+        with open(manifest_path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        overall = (manifest.get("scoring") or {}).get("overall") or {}
+        print("  {} : seed={} 评分={} 指纹={}".format(
+            os.path.basename(os.path.dirname(manifest_path)),
+            manifest.get("seed"),
+            overall.get("score"),
+            manifest.get("repro_fingerprint"),
+        ))
+
     print("\n聚合报告：{}".format(matrix_path))
     return 0
 
@@ -257,10 +375,27 @@ def build_parser() -> argparse.ArgumentParser:
             "norollback",
             "crossfile",
             "dirtyfile",
+            "forget",
+            "ignoreforget",
+            "okconfig",
+            "okamnesia",
+            "openkylin",
         ],
         help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）/ deepseek（真实 LLM）"
         " / adapter（外部智能体）/ sessiondummy / amnesia（跨会话变化体）/"
-        " rollback / norollback（冲突回滚变化体）/ crossfile / dirtyfile（交叉文件变化体）",
+        " rollback / norollback（冲突回滚变化体）/ crossfile / dirtyfile（交叉文件变化体）/"
+        " forget / ignoreforget（遗忘指令变化体）/ okconfig / okamnesia（openKylin 配置变化体）"
+        " / openkylin（openKylin 智能体框架适配器）",
+    )
+    p_run.add_argument(
+        "--audit",
+        default="",
+        help="启用 OS 侧审计证据采集（逗号分隔）：journal / auditd / process / filesystem / replay",
+    )
+    p_run.add_argument(
+        "--audit-replay",
+        default=None,
+        help="离线审计流 NDJSON 文件路径（配合 --audit replay），用于无系统权限环境评测重放",
     )
     p_run.add_argument("--seed", type=int, default=42, help="随机种子")
     p_run.add_argument("--outdir", default=None, help="输出目录（默认 out/<scenario_id>）")
@@ -289,6 +424,11 @@ def build_parser() -> argparse.ArgumentParser:
             "norollback",
             "crossfile",
             "dirtyfile",
+            "forget",
+            "ignoreforget",
+            "okconfig",
+            "okamnesia",
+            "openkylin",
         ],
         help="评测智能体",
     )
@@ -296,6 +436,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--seeds",
         default="1,2,3,4,5",
         help="逗号分隔的 seed 列表（默认 1,2,3,4,5）",
+    )
+    p_bench.add_argument(
+        "--audit",
+        default="",
+        help="启用 OS 侧审计证据采集（逗号分隔）：journal / auditd / process / filesystem / replay",
+    )
+    p_bench.add_argument(
+        "--audit-replay",
+        default=None,
+        help="离线审计流 NDJSON 文件路径（配合 --audit replay）",
     )
     p_bench.add_argument(
         "--outdir",

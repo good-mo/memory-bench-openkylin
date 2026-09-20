@@ -3,12 +3,14 @@
 import html
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from memory_bench.evidence.consistency import CheckResult
 from memory_bench.evidence.model import EvidenceEvent, EvidenceType
 from memory_bench.evidence.store import EvidenceStore
 from memory_bench.report.forgetting import compute_forgetting_curve
+from memory_bench.report.scoring import build_scoring
+from memory_bench.report.tracking import build_manifest, write_manifest
 from memory_bench.scenarios.types import Scenario
 
 _HTML_TITLE = "openKylin 智能体长期记忆评测报告"
@@ -80,22 +82,32 @@ def build_report(
     checks: List[CheckResult],
     scenario: Scenario,
     outdir: str,
+    agent_name: Optional[str] = None,
+    seed: Optional[int] = None,
 ) -> Dict[str, str]:
-    """生成 report.json 与 report.html，返回 {"json": 路径, "html": 路径}。"""
+    """生成 report.json 与 report.html，返回 {"json": 路径, "html": 路径}。
+
+    agent_name 可选：提供时一并生成 manifest.json（run 追踪 / 可复现性校验）。
+    seed 可选：本次运行实际使用的随机种子（默认场景声明 seed），
+    保证不同 seed 的运行拥有不同指纹（bench 多种子时尤为重要）。
+    """
     os.makedirs(outdir, exist_ok=True)
 
+    run_seed = int(seed) if seed is not None else scenario.seed
     all_events = store.query()
     ev_by_type: Dict[str, int] = {}
     for ev in all_events:
         ev_by_type[ev.type.value] = ev_by_type.get(ev.type.value, 0) + 1
 
+    scoring = build_scoring(checks, scenario.dimension)
     report_data: Dict[str, Any] = {
         "meta": {
             "project": "memory-bench-openkylin",
-            "milestone": "M1",
+            "milestone": "M2",
             "scenario": scenario.name,
             "dimension": scenario.dimension,
             "seed": scenario.seed,
+            "run_seed": run_seed,
             "generated_at": _now_iso(),
         },
         "evidence_stats": {
@@ -103,6 +115,7 @@ def build_report(
             "by_type": ev_by_type,
         },
         "consistency": [c.to_dict() for c in checks],
+        "scoring": scoring,
         "forgetting_curves": compute_forgetting_curve(store, scenario),
         "steps": [
             {
@@ -120,6 +133,17 @@ def build_report(
     with open(json_path, "w", encoding="utf-8") as fh:
         json.dump(report_data, fh, ensure_ascii=False, indent=2)
 
+    if agent_name:
+        manifest = build_manifest(
+            run_id=_new_run_id(),
+            scenario=scenario,
+            agent_name=agent_name,
+            seed=run_seed,
+            evidence_stats=report_data["evidence_stats"],
+            scoring_summary=({"overall": scoring["overall"]} if scoring else scoring),
+        )
+        write_manifest(outdir, manifest)
+
     html_path = os.path.join(outdir, "report.html")
     with open(html_path, "w", encoding="utf-8") as fh:
         fh.write(_render_html(report_data, all_events))
@@ -131,6 +155,12 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+def _new_run_id() -> str:
+    import uuid
+
+    return "run-{}".format(uuid.uuid4().hex[:12])
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +179,7 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
     timeline = "".join(_render_timeline_item(ev) for ev in events)
     step_section = _render_steps(data["steps"])
     forgetting_section = _render_forgetting(data.get("forgetting_curves") or [])
+    scoring_section = _render_scoring(data.get("scoring") or {})
 
     return """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -177,6 +208,11 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
   </div>
 
   <div class="card">
+    <h2>多维能力评分</h2>
+    {scoring_section}
+  </div>
+
+  <div class="card">
     <h2>跨证据一致性检查</h2>
     <table>
       <tr><th>规则</th><th>状态</th><th>说明</th><th>相关证据 id</th></tr>
@@ -200,7 +236,7 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
     <div class="timeline">{timeline}</div>
   </div>
 
-  <footer>memory-bench-openkylin M1 ｜ 证据驱动：对话 · 记忆 · 行动 · 产物 统一为带时间戳的证据事件</footer>
+  <footer>memory-bench-openkylin M2 ｜ 证据驱动：对话 · 记忆 · 行动 · 产物 统一为带时间戳的证据事件</footer>
 </div>
 </body>
 </html>""".format(
@@ -215,6 +251,7 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
         check_rows=check_rows,
         step_section=step_section,
         forgetting_section=forgetting_section,
+        scoring_section=scoring_section,
         timeline=timeline,
     )
 
@@ -231,6 +268,63 @@ def _render_check_row(check: Dict[str, Any]) -> str:
         msg=html.escape(str(check["message"])),
         ids=html.escape(", ".join(ids)) if ids else "—",
     )
+
+
+def _render_scoring(scoring: Dict[str, Any]) -> str:
+    """渲染多维评分卡片（综合评分 + 失败模式 + 维度画像）。"""
+    if not scoring:
+        return '<p class="meta">本次评测无评分数据。</p>'
+    overall = scoring.get("overall") or {}
+    parts = []
+    score = overall.get("score")
+    parts.append(
+        "<p>综合评分：<strong>{score}</strong>（{status}）｜ "
+        "PASS={pass_} WARN={warn} FAIL={fail} N/A={na}</p>".format(
+            score=str(score) if score is not None else "-",
+            status=str(overall.get("status", "-")),
+            pass_=overall.get("pass", 0),
+            warn=overall.get("warn", 0),
+            fail=overall.get("fail", 0),
+            na=overall.get("na", 0),
+        )
+    )
+    modes = overall.get("failure_modes") or []
+    if modes:
+        rows = "".join(
+            "<tr><td>{mode}</td><td>{label}</td><td>{count}</td></tr>".format(
+                mode=html.escape(str(m["mode"])),
+                label=html.escape(str(m["label"])),
+                count=m["count"],
+            )
+            for m in modes
+        )
+        parts.append(
+            '<h3>失败模式归因</h3><table><tr><th>模式</th><th>含义</th>'
+            "<th>数量</th></tr>{rows}</table>".format(rows=rows)
+        )
+    dims = scoring.get("dimensions") or []
+    if dims:
+        dim_rows = []
+        for dim in dims:
+            score = dim.get("score")
+            dim_rows.append(
+                "<tr><td>{dim}</td><td>{label}</td>"
+                "<td><strong>{score}</strong></td><td>{status}</td>"
+                "<td>{checks} 条</td></tr>".format(
+                    dim=html.escape(str(dim.get("dimension"))),
+                    label=html.escape(str(dim.get("label"))),
+                    score=str(score) if score is not None else "-",
+                    status=html.escape(str(dim.get("status"))),
+                    checks=dim.get("checks", 0),
+                )
+            )
+        parts.append(
+            '<h3>能力维度画像</h3><table><tr><th>维度</th><th>说明</th>'
+            "<th>得分</th><th>等级</th><th>检查数</th></tr>{rows}</table>".format(
+                rows="".join(dim_rows)
+            )
+        )
+    return "".join(parts)
 
 
 def _render_timeline_item(ev: EvidenceEvent) -> str:

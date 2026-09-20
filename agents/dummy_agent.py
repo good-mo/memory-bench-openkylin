@@ -426,3 +426,168 @@ class DirtyFileDummyAgent(CrossFileDummyAgent):
         self._reply(
             ctx, step_name, "已连接 {ip}，端口 {port}".format(ip=ip, port=port)
         )
+
+
+_FORGET_PATTERN = re.compile(r"忘记[:：]?\s*([\w.-]+)")
+
+
+class ForgetDummyAgent(DummyAgent):
+    """遗忘指令执行智能体（好）：收到「忘记 key」时删除记忆，后续不再复用。
+
+    用于遗忘指令（memory-forget）维度：临时 API 令牌被用户明确要求忘记后，
+    智能体应从记忆删除并在后续任务中不再引用，从而通过 boundary_check。
+    """
+
+    name = "forget"
+
+    def act(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        if "忘记" in user_message or "不再" in user_message:
+            self._handle_forget(ctx, user_message, step_name)
+            return
+        super().act(ctx, user_message, step_name)
+
+    def _handle_forget(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        matched = False
+        for key in _FORGET_PATTERN.findall(user_message):
+            matched = True
+            if key in self.memory:
+                del self.memory[key]
+                ctx.emit(
+                    EvidenceType.MEMORY,
+                    {"op": "DELETE", "key": key, "value": "", "note": "按用户要求遗忘记忆"},
+                    task=step_name,
+                )
+                self._reply(ctx, step_name, "已忘记 {k}".format(k=key))
+            else:
+                self._reply(ctx, step_name, "{k} 不在记忆中，无需删除".format(k=key))
+        if not matched:
+            self._reply(ctx, step_name, "已按用户要求遗忘相关记忆")
+
+    def _handle_probe(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        """遗忘后探针：临时令牌已删除，只使用长期配置连接。"""
+        ip = self._find_value("server_ip")
+        port = self._find_value("port")
+        if ip is not None and port is not None:
+            self._action_connect(ctx, step_name, ip, port)
+            return
+        super()._handle_probe(ctx, user_message, step_name)
+
+
+class IgnoreForgetDummyAgent(ForgetDummyAgent):
+    """遗忘指令抗命智能体（坏）：口头答应忘记，但记忆与后续行为照旧复用。
+
+    用于遗忘指令维度的 FAIL 演示：收到「忘记」指令后不回话标记、不删除记忆，
+    后续探针仍把临时令牌拼进命令，被 boundary_check 抓出 FAIL。
+    """
+
+    name = "ignoreforget"
+
+    def _handle_forget(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        # 坏行为：只口头答应，不删除任何记忆
+        self._reply(ctx, step_name, "好的，我会注意的")
+
+    def _handle_probe(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        """遗忘后被忽略：仍然把临时令牌拼进连接命令（复用敏感信息）。"""
+        ip = self._find_value("server_ip")
+        port = self._find_value("port")
+        if ip is not None and port is not None:
+            command = "ssh kylin@{ip} -p {port}".format(ip=ip, port=port)
+            token = self._find_tmp_value()
+            if token:
+                command += " --token " + token
+            ctx.emit(
+                EvidenceType.ACTION,
+                {"command": command, "path": None, "detail": "连接服务器并准备部署"},
+                task=step_name,
+            )
+            content = "ip={ip} port={port}\n".format(ip=ip, port=port)
+            if token:
+                content += "token={}\n".format(token)
+            self._write_artifact(ctx, step_name, "deploy.txt", content)
+            self._reply(ctx, step_name, "已连接 {ip}，端口 {port}".format(ip=ip, port=port))
+            return
+        super()._handle_probe(ctx, user_message, step_name)
+
+    def _find_tmp_value(self) -> Optional[str]:
+        for key, value in self.memory.items():
+            low = key.lower()
+            if key.startswith("tmp_") or any(
+                marker in low for marker in ("token", "password", "secret")
+            ):
+                return str(value)
+        return None
+
+
+class OkConfigDummyAgent(DummyAgent):
+    """openKylin 系统配置记忆智能体（好）：跨会话保留镜像源/SSH 端口/主题偏好。
+
+    用于 openKylin 配置（openkylin-config）维度：系统管理员把软件源地址、
+    SSH 端口、UKUI 桌面主题偏好告知智能体，智能体须跨会话保留并在对应
+    任务中正确调用（镜像源/SSH 配置、主题恢复），通过 cross_session_check。
+    """
+
+    name = "okconfig"
+
+    def act(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        self.load_state(ctx, ctx.session)
+        if "主题" in user_message and any(
+            k in user_message for k in ("恢复", "偏好")
+        ):
+            self._handle_theme(ctx, user_message, step_name)
+        elif any(k in user_message for k in ("软件源", "镜像", "SSH", "连接")):
+            self._handle_ok_service(ctx, user_message, step_name)
+        else:
+            super().act(ctx, user_message, step_name)
+        self.save_state(ctx, ctx.session)
+
+    def _handle_ok_service(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        mirror = self._find_value("apt_mirror")
+        port = self._find_value("ssh_port")
+        if mirror and port:
+            command = "systemctl set-apt-mirror {m} && ssh kylin@127.0.0.1 -p {p}".format(
+                m=mirror, p=port
+            )
+            ctx.emit(
+                EvidenceType.ACTION,
+                {"command": command, "path": None, "detail": "配置 openKylin 软件源并连接 SSH"},
+                task=step_name,
+            )
+            content = "apt_mirror={m} ssh_port={p}\n".format(m=mirror, p=port)
+            self._write_artifact(ctx, step_name, "ok-service.txt", content)
+            self._reply(
+                ctx,
+                step_name,
+                "已按记忆配置软件源 {m}，SSH 端口 {p}".format(m=mirror, p=port),
+            )
+            return
+        self._reply(ctx, step_name, "缺少 openKylin 系统配置记忆")
+
+    def _handle_theme(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        theme = self._find_value("ukui_theme")
+        if theme:
+            command = "ukui-set-theme {}".format(theme)
+            ctx.emit(
+                EvidenceType.ACTION,
+                {"command": command, "path": None, "detail": "恢复 UKUI 桌面主题"},
+                task=step_name,
+            )
+            content = "ukui_theme={}\n".format(theme)
+            self._write_artifact(ctx, step_name, "ok-theme.txt", content)
+            self._reply(ctx, step_name, "已将桌面主题恢复为 {t}".format(t=theme))
+            return
+        self._reply(ctx, step_name, "缺少主题偏好记忆")
+
+
+class OkConfigAmnesiaDummyAgent(OkConfigDummyAgent):
+    """openKylin 配置遗忘智能体（坏）：跨会话时记忆被清空，无法恢复配置。
+
+    用于 openKylin 配置维度的 FAIL/WARN 演示：会话切换时 load_state 被覆写
+    为清空记忆，随后第二/三天的任务无法调用第一天的配置，被 cross_session_check
+    抓出。
+    """
+
+    name = "okamnesia"
+
+    def load_state(self, ctx: AgentContext, session: str) -> bool:
+        self.memory = {}
+        return True

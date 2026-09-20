@@ -10,7 +10,11 @@ from agents.dummy_agent import (
     BadDummyAgent,
     ConfuseDummyAgent,
     DummyAgent,
+    ForgetDummyAgent,
+    IgnoreForgetDummyAgent,
     LeakyDummyAgent,
+    OkConfigAmnesiaDummyAgent,
+    OkConfigDummyAgent,
 )
 from memory_bench.evidence.store import EvidenceStore
 from memory_bench.harness.orchestrator import Orchestrator
@@ -32,6 +36,10 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
             "bad": BadDummyAgent(seed=seed),
             "confuse": ConfuseDummyAgent(seed=seed),
             "leaky": LeakyDummyAgent(seed=seed),
+            "forget": ForgetDummyAgent(seed=seed),
+            "ignoreforget": IgnoreForgetDummyAgent(seed=seed),
+            "okconfig": OkConfigDummyAgent(seed=seed),
+            "okamnesia": OkConfigAmnesiaDummyAgent(seed=seed),
         }[agent]
         store = EvidenceStore(str(self.outdir / "evidence.ndjson"))
         return Orchestrator(
@@ -136,6 +144,55 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
             any(c.rule == "boundary_check" for c in fails),
             "隐私边界：敏感支付凭据被复用必须被抓出 FAIL",
         )
+
+    # ------------------------------------------------------------ M2 维度覆盖
+
+    def test_forget_dummy_no_token_reuse(self):
+        result = self.run_scenario("demo_forget", "forget", 41)
+        self.assertEqual(result.summary["checks_fail"], 0)
+        self.assertGreaterEqual(
+            result.summary["checks_pass"], 1,
+            "遗忘指令：忘记后不应再复用临时令牌",
+        )
+
+    def test_ignoreforget_caught_by_token_reuse(self):
+        result = self.run_scenario("demo_forget", "ignoreforget", 41)
+        fails = [c for c in result.checks if c.status.value == "FAIL"]
+        self.assertTrue(
+            any(c.rule == "boundary_check" for c in fails),
+            "遗忘指令：抗命复用临时令牌必须被抓出 FAIL",
+        )
+
+    def test_okconfig_cross_session_passes(self):
+        result = self.run_scenario("demo_ok_config", "okconfig", 43)
+        self.assertEqual(result.summary["checks_fail"], 0)
+        self.assertGreaterEqual(
+            result.summary["checks_pass"], 1,
+            "openKylin 配置：跨会话应能调用第一天的配置",
+        )
+
+    def test_okamnesia_caught_by_lost_config(self):
+        result = self.run_scenario("demo_ok_config", "okamnesia", 43)
+        fails_or_warn = [c for c in result.checks if c.status.value in ("FAIL", "WARN")]
+        self.assertTrue(
+            any(c.rule == "cross_session_check" for c in fails_or_warn),
+            "openKylin 配置：跨会话丢失配置必须被抓出",
+        )
+
+    def test_report_contains_scoring_and_manifest(self):
+        result = self.run_scenario("demo_retention", "dummy", 42)
+        report_data = json.loads(
+            (self.outdir / "report.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("scoring", report_data)
+        self.assertIn("overall", report_data["scoring"])
+        self.assertIn("dimensions", report_data["scoring"])
+        self.assertTrue((self.outdir / "manifest.json").exists())
+        manifest = json.loads(
+            (self.outdir / "manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["agent"], "dummy")
+        self.assertIn("repro_fingerprint", manifest)
 
 
 if __name__ == "__main__":

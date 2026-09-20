@@ -23,6 +23,10 @@ RUNNERS=(
   "demo_rollback norollback"
   "demo_crossfile crossfile"
   "demo_crossfile dirtyfile"
+  "demo_forget forget"
+  "demo_forget ignoreforget"
+  "demo_ok_config okconfig"
+  "demo_ok_config okamnesia"
 )
 
 if [ "${1:-}" != "--keep-out" ]; then
@@ -47,7 +51,7 @@ for pair in "${RUNNERS[@]}"; do
 done
 
 echo
-echo "==== 六维矩阵汇总（PASS/FAIL/WARN/N/A）====" | tee -a "$LOG"
+echo "==== 维度矩阵汇总（PASS/FAIL/WARN/N/A + 综合评分）====" | tee -a "$LOG"
 python3 - <<'PY' >> "$LOG" 2>&1
 import glob
 import json
@@ -80,21 +84,29 @@ ORDER = [
     ("demo_rollback", "norollback", "冲突回滚(坏变体)"),
     ("demo_crossfile", "crossfile", "交叉文件一致性"),
     ("demo_crossfile", "dirtyfile", "交叉文件一致性(坏变体)"),
+    ("demo_forget", "forget", "遗忘指令执行"),
+    ("demo_forget", "ignoreforget", "遗忘指令执行(坏变体)"),
+    ("demo_ok_config", "okconfig", "openKylin 配置记忆"),
+    ("demo_ok_config", "okamnesia", "openKylin 配置记忆(坏变体)"),
 ]
 
-header = "{:<22} {:<14} {:>6} {:>6} {:>6} {:>6}  {}".format(
-    "场景/智能体", "维度", "PASS", "FAIL", "WARN", "N/A", "说明")
+header = "{:<22} {:<16} {:>6} {:>6} {:>6} {:>6} {:>7}  {}".format(
+    "场景/智能体", "维度", "PASS", "FAIL", "WARN", "N/A", "评分", "说明")
 print(header)
 print("-" * len(header))
 for sid, agent, label in ORDER:
     data = load(sid, agent)
     if data is None:
-        print("{:<22} {:<14} 无报告".format(sid + "/" + agent, label))
+        print("{:<22} {:<16} 无报告".format(sid + "/" + agent, label))
         continue
     checks = data.get("consistency", [])
     stat = {"PASS": 0, "FAIL": 0, "WARN": 0, "N/A": 0}
     for c in checks:
         stat[c["status"]] = stat.get(c["status"], 0) + 1
+    scoring = data.get("scoring") or {}
+    overall = scoring.get("overall") or {}
+    score = overall.get("score")
+    score_txt = "{:.3f}".format(score) if score is not None else "-"
     note = ""
     for c in checks:
         if c["status"] == "FAIL":
@@ -103,9 +115,9 @@ for sid, agent, label in ORDER:
     if c["status"] in ("FAIL",) and note == "":
         note = ""
     note = note if len(note) <= 40 else note[:40] + "…"
-    print("{:<22} {:<14} {:>6} {:>6} {:>6} {:>6}  {}".format(
+    print("{:<22} {:<16} {:>6} {:>6} {:>6} {:>6} {:>7}  {}".format(
         sid + "/" + agent, label, stat["PASS"], stat["FAIL"], stat["WARN"],
-        stat["N/A"], note))
+        stat["N/A"], score_txt, note))
 PY
 
 echo

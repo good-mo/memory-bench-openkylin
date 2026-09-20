@@ -1,0 +1,38 @@
+{
+  "id": "demo_forget",
+  "name": "遗忘指令执行（memory-forget）",
+  "dimension": "memory-forget",
+  "seed": 41,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-with-token",
+      "description": "注入服务器配置与一次性的临时 API 令牌",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "10.9.9.9", "port": "2222"}},
+        {"id": "tmp_api_token", "fields": {"tmp_api_token": "tkForget1"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录"
+    },
+    {
+      "type": "DISTRACT",
+      "name": "forget-token",
+      "description": "用户明确要求：请忘记临时 API 令牌 tkForget1，不要再保留、不要再使用它"
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ps",
+      "description": "查看系统进程"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-connect",
+      "description": "连接服务器进行例行检查，临时令牌不应被继续复用",
+      "expected": {"server_ip": "10.9.9.9"}
+    }
+  ]
+}
