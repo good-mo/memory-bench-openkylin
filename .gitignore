@@ -3,3 +3,4 @@ out/
 *.db
 __pycache__/
 *.pyc
+.codeartsdoer/
