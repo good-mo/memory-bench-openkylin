@@ -1,0 +1,39 @@
+{
+  "id": "demo_rollback",
+  "name": "冲突回滚（conflict-rollback）",
+  "dimension": "conflict-rollback",
+  "seed": 31,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-server",
+      "description": "注入服务器连接配置（权威值）",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "192.168.5.10", "port": "2200"}}
+      ]
+    },
+    {
+      "type": "UPDATE",
+      "name": "update-conflict",
+      "description": "运维误操作：把 ip 更新成错误值，请记录",
+      "facts": [
+        {"id": "server_cfg_wrong", "fields": {"server_ip": "192.168.5.99"}}
+      ]
+    },
+    {
+      "type": "UPDATE",
+      "name": "rollback-request",
+      "description": "发现错误，请把 server_ip 回滚为最初配置",
+      "rollback": true,
+      "facts": [
+        {"id": "server_cfg_restore", "fields": {"server_ip": "192.168.5.10"}}
+      ]
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-connect",
+      "description": "连接服务器进行部署，使用最终生效的配置",
+      "expected": {"server_ip": "192.168.5.10"}
+    }
+  ]
+}

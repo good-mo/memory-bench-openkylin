@@ -17,6 +17,12 @@ RUNNERS=(
   "demo_reuse dummy"
   "demo_privacy_constraint dummy"
   "demo_privacy_constraint leaky"
+  "demo_persist sessiondummy"
+  "demo_persist amnesia"
+  "demo_rollback rollback"
+  "demo_rollback norollback"
+  "demo_crossfile crossfile"
+  "demo_crossfile dirtyfile"
 )
 
 if [ "${1:-}" != "--keep-out" ]; then
@@ -68,6 +74,12 @@ ORDER = [
     ("demo_reuse", "dummy", "任务复用"),
     ("demo_privacy_constraint", "dummy", "隐私边界"),
     ("demo_privacy_constraint", "leaky", "隐私边界(坏变体)"),
+    ("demo_persist", "sessiondummy", "跨会话持久化"),
+    ("demo_persist", "amnesia", "跨会话持久化(坏变体)"),
+    ("demo_rollback", "rollback", "冲突回滚"),
+    ("demo_rollback", "norollback", "冲突回滚(坏变体)"),
+    ("demo_crossfile", "crossfile", "交叉文件一致性"),
+    ("demo_crossfile", "dirtyfile", "交叉文件一致性(坏变体)"),
 ]
 
 header = "{:<22} {:<14} {:>6} {:>6} {:>6} {:>6}  {}".format(

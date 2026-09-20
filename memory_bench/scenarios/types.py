@@ -43,22 +43,35 @@ _STEP_TYPE_VALUES = {t.value for t in StepType}
 
 @dataclass
 class Step:
-    """场景中的一个步骤。"""
+    """场景中的一个步骤。
+
+    session: 可选字段，指定该步骤所属会话（用于跨会话持久化评测）。
+        为 None 时沿用编排器上下文中的当前会话。
+    rollback: 可选标志，UPDATE 步骤为 True 时表示对相关键执行「回滚」
+        （恢复为最早权威值）而非普通覆盖，供冲突回滚评测使用。
+    """
 
     type: StepType
     name: str
     description: str
     facts: List[Fact] = field(default_factory=list)
     expected: Dict[str, str] = field(default_factory=dict)
+    session: Optional[str] = None
+    rollback: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "type": self.type.value,
             "name": self.name,
             "description": self.description,
             "facts": [f.to_dict() for f in self.facts],
             "expected": self.expected,
         }
+        if self.session is not None:
+            data["session"] = self.session
+        if self.rollback:
+            data["rollback"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Step":
@@ -73,12 +86,18 @@ class Step:
         expected = data.get("expected", {})
         if not isinstance(expected, dict):
             raise ValueError("Step.expected 必须是对象/字典")
+        session = data.get("session")
+        if session is not None and not isinstance(session, str):
+            raise ValueError("Step.session 必须是字符串或空")
+        rollback = bool(data.get("rollback", False))
         return cls(
             type=StepType(data["type"]),
             name=data["name"],
             description=data["description"],
             facts=facts,
             expected={str(k): str(v) for k, v in expected.items()},
+            session=session,
+            rollback=rollback,
         )
 
     def __repr__(self) -> str:  # pragma: no cover

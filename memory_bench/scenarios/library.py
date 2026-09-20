@@ -242,6 +242,133 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         ],
     )
 
+    persist = Scenario(
+        id="demo_persist",
+        name="跨会话持久化（cross-session）",
+        dimension="cross-session",
+        seed=29,
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-day1",
+                description="第一天：用户把服务器配置告知智能体，要求长期记住",
+                session="day1",
+                facts=[
+                    Fact(
+                        id="server_cfg",
+                        fields={"server_ip": "10.10.1.50", "port": "2222"},
+                    )
+                ],
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-day1",
+                description="第一天：整理桌面文件（无关任务）",
+                session="day1",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-day2-connect",
+                description="第二天：连接服务器进行例行检查，服务器信息来自昨天的对话",
+                session="day2",
+                expected={"server_ip": "10.10.1.50"},
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-day2",
+                description="第二天：查看系统进程（无关任务）",
+                session="day2",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-day3-report",
+                description="第三天：再次连接服务器并生成部署清单",
+                session="day3",
+                expected={"server_ip": "10.10.1.50", "port": "2222"},
+            ),
+        ],
+    )
+
+    rollback = Scenario(
+        id="demo_rollback",
+        name="冲突回滚（conflict-rollback）",
+        dimension="conflict-rollback",
+        seed=31,
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-server",
+                description="注入服务器连接配置（权威值）",
+                facts=[
+                    Fact(
+                        id="server_cfg",
+                        fields={"server_ip": "192.168.5.10", "port": "2200"},
+                    )
+                ],
+            ),
+            Step(
+                type=StepType.UPDATE,
+                name="update-conflict",
+                description="运维误操作：把 ip 更新成错误值，请记录",
+                facts=[
+                    Fact(
+                        id="server_cfg_wrong",
+                        fields={"server_ip": "192.168.5.99"},
+                    )
+                ],
+            ),
+            Step(
+                type=StepType.UPDATE,
+                name="rollback-request",
+                description="发现错误，请把 server_ip 回滚为最初配置",
+                rollback=True,
+                facts=[
+                    Fact(
+                        id="server_cfg_restore",
+                        fields={"server_ip": "192.168.5.10"},
+                    )
+                ],
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-connect",
+                description="连接服务器进行部署，使用最终生效的配置",
+                expected={"server_ip": "192.168.5.10"},
+            ),
+        ],
+    )
+
+    crossfile = Scenario(
+        id="demo_crossfile",
+        name="交叉文件一致性（cross-file）",
+        dimension="cross-file-consistency",
+        seed=37,
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-server",
+                description="注入服务器连接配置",
+                facts=[
+                    Fact(
+                        id="server_cfg",
+                        fields={"server_ip": "172.16.8.20", "port": "8822"},
+                    )
+                ],
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-ls",
+                description="查看当前目录",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-dual-file",
+                description="连接服务器，并把部署配置同时写入 deploy.txt 与 backup.txt 两个文件",
+                expected={"server_ip": "172.16.8.20"},
+            ),
+        ],
+    )
+
     return {
         "demo_retention": retention,
         "demo_update": update,
@@ -250,4 +377,7 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         "demo_boundary": boundary,
         "demo_reuse": reuse,
         "demo_privacy_constraint": privacy,
+        "demo_persist": persist,
+        "demo_rollback": rollback,
+        "demo_crossfile": crossfile,
     }

@@ -22,6 +22,9 @@ _BUILTIN = [
     "demo_boundary",
     "demo_reuse",
     "demo_privacy_constraint",
+    "demo_persist",
+    "demo_rollback",
+    "demo_crossfile",
 ]
 
 
@@ -67,8 +70,33 @@ def make_agent(name: str, seed: int):
         from agents.adapter_agent import AdapterAgent
 
         return AdapterAgent(seed=seed)
+    if name == "sessiondummy":
+        from agents.dummy_agent import SessionDummyAgent
+
+        return SessionDummyAgent(seed=seed)
+    if name == "amnesia":
+        from agents.dummy_agent import AmnesiaDummyAgent
+
+        return AmnesiaDummyAgent(seed=seed)
+    if name == "rollback":
+        from agents.dummy_agent import RollbackDummyAgent
+
+        return RollbackDummyAgent(seed=seed)
+    if name == "norollback":
+        from agents.dummy_agent import NoRollbackDummyAgent
+
+        return NoRollbackDummyAgent(seed=seed)
+    if name == "crossfile":
+        from agents.dummy_agent import CrossFileDummyAgent
+
+        return CrossFileDummyAgent(seed=seed)
+    if name == "dirtyfile":
+        from agents.dummy_agent import DirtyFileDummyAgent
+
+        return DirtyFileDummyAgent(seed=seed)
     raise SystemExit(
-        "未知智能体 {!r}：可选 dummy / bad / confuse / leaky / deepseek / adapter".format(
+        "未知智能体 {!r}：可选 dummy / bad / confuse / leaky / deepseek / adapter"
+        " / sessiondummy / amnesia / rollback / norollback / crossfile / dirtyfile".format(
             name
         )
     )
@@ -125,6 +153,55 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# bench 子命令（seed 扰动鲁棒性）
+# ---------------------------------------------------------------------------
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from memory_bench.robustness import (
+        aggregate_matrix,
+        run_seed_matrix,
+        write_matrix_summary,
+    )
+
+    scenario = load_scenario_with_fallback(args.scenario)
+    seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
+
+    def factory(seed: int):
+        return make_agent(args.agent, seed)
+
+    outdir = args.outdir if args.outdir else "out/bench"
+    results = run_seed_matrix(
+        scenario=scenario,
+        agent_factory=factory,
+        seeds=seeds,
+        outdir=outdir,
+        agent_name=args.agent,
+    )
+    aggregate = aggregate_matrix(results)
+    matrix_path = write_matrix_summary(outdir, aggregate)
+
+    print("== memory-bench-openkylin seed 扰动鲁棒性 ==")
+    print("场景：{}（维度：{}） 智能体：{}  seeds={}".format(
+        scenario.name, scenario.dimension, args.agent, seeds
+    ))
+    summary = aggregate["summary"]
+    print("seed 数量：{}  PASS 均值：{:.3f}  PASS 标准差：{:.3f}  判定：{}".format(
+        summary["seed_count"],
+        summary["mean_pass_ratio"],
+        summary["pass_ratio_std"],
+        summary["verdict"],
+    ))
+    print("\n规则级稳定率（出现次数最多的状态占比）：")
+    for rule, info in sorted(aggregate["rules"].items()):
+        print("  {:<32} 主状态={:<6} 稳定率={:.3f} 分布={}".format(
+            rule, info["dominant"], info["stability"], info["distribution"]
+        ))
+    print("\n聚合报告：{}".format(matrix_path))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # serve 子命令
 # ---------------------------------------------------------------------------
 
@@ -162,14 +239,70 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--scenario",
         default="demo_retention",
-        help="内置场景 demo_retention / demo_update，或 JSON 文件路径",
+        help="内置场景 demo_retention 等，或 JSON 文件路径",
     )
-    p_run.add_argument("--agent", default="dummy", choices=["dummy", "bad", "confuse", "leaky", "deepseek", "adapter"],
-                       help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）/ deepseek（真实 LLM）/ adapter（外部智能体，通过 MB_ADAPTER_* 环境变量配置后端）")
+    p_run.add_argument(
+        "--agent",
+        default="dummy",
+        choices=[
+            "dummy",
+            "bad",
+            "confuse",
+            "leaky",
+            "deepseek",
+            "adapter",
+            "sessiondummy",
+            "amnesia",
+            "rollback",
+            "norollback",
+            "crossfile",
+            "dirtyfile",
+        ],
+        help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）/ deepseek（真实 LLM）"
+        " / adapter（外部智能体）/ sessiondummy / amnesia（跨会话变化体）/"
+        " rollback / norollback（冲突回滚变化体）/ crossfile / dirtyfile（交叉文件变化体）",
+    )
     p_run.add_argument("--seed", type=int, default=42, help="随机种子")
     p_run.add_argument("--outdir", default=None, help="输出目录（默认 out/<scenario_id>）")
     p_run.add_argument("--workspace", default=None, help="工作区目录")
     p_run.set_defaults(func=cmd_run)
+
+    p_bench = sub.add_parser("bench", help="seed 扰动鲁棒性：多种子重复运行并聚合")
+    p_bench.add_argument(
+        "--scenario",
+        default="demo_retention",
+        help="内置场景或 JSON 文件路径",
+    )
+    p_bench.add_argument(
+        "--agent",
+        default="dummy",
+        choices=[
+            "dummy",
+            "bad",
+            "confuse",
+            "leaky",
+            "deepseek",
+            "adapter",
+            "sessiondummy",
+            "amnesia",
+            "rollback",
+            "norollback",
+            "crossfile",
+            "dirtyfile",
+        ],
+        help="评测智能体",
+    )
+    p_bench.add_argument(
+        "--seeds",
+        default="1,2,3,4,5",
+        help="逗号分隔的 seed 列表（默认 1,2,3,4,5）",
+    )
+    p_bench.add_argument(
+        "--outdir",
+        default="out/bench",
+        help="聚合输出目录（默认 out/bench）",
+    )
+    p_bench.set_defaults(func=cmd_bench)
 
     p_serve = sub.add_parser("serve", help="HTTP 静态服务报告输出目录")
     p_serve.add_argument("--dir", default="out", help="报告目录（默认 out）")

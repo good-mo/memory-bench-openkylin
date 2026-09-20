@@ -244,3 +244,185 @@ class LeakyDummyAgent(DummyAgent):
         self._reply(
             ctx, step_name, "已连接 {ip}，端口 {port}".format(ip=ip, port=port)
         )
+
+
+class SessionDummyAgent(DummyAgent):
+    """跨会话持久化智能体（好）：每次 act 前从 ctx.state 恢复记忆，结束时保存。
+
+    依赖编排器在会话切换时调用 save_state / load_state（Agent 基类默认实现
+    会在 state_dir 按 session 名落盘 JSON）。本类的 memory 始终只属于当前会话，
+    触发跨会话校验：新会话 PROBE 必须能调用旧会话注入的值。
+    """
+
+    name = "sessiondummy"
+
+    def act(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        self.load_state(ctx, ctx.session)
+        super().act(ctx, user_message, step_name)
+        self.save_state(ctx, ctx.session)
+
+
+class AmnesiaDummyAgent(DummyAgent):
+    """跨会话失忆智能体（坏）：load_state 时会话间记忆被清空（持久化失败）。
+
+    用于跨会话持久化（cross-session persistence）维度的 FAIL 演示：编排器在
+    新会话开始时调用 load_state，本类覆写后直接清空记忆，随后的 PROBE 便无法
+    引用旧会话注入的值，被 cross_session_check 抓出 WARN/FAIL。
+    """
+
+    name = "amnesia"
+
+    def load_state(self, ctx: AgentContext, session: str) -> bool:
+        self.memory = {}
+        return True
+
+
+class RollbackDummyAgent(DummyAgent):
+    """冲突回滚智能体（好）：收到「改回/回滚」指令时恢复到该键最早写入的权威值。
+
+    用于冲突回滚（conflict-rollback）维度：记忆被误更新为冲突值后，智能体
+    能识别回滚意图并把值恢复为最初的权威值，从而通过 conflict_rollback_check。
+    """
+
+    name = "rollback"
+
+    def __init__(self, seed: int = 0):
+        super().__init__(seed=seed)
+        self._history: Dict[str, list] = {}
+
+    # ------------------------------------------------------------------ 覆写
+
+    def _do_update(self, ctx: AgentContext, step_name: str, key: str, value: str) -> None:
+        """记录变更历史后执行更新，供回滚时使用最早值。"""
+        history = self._history.setdefault(key, [])
+        if key in self.memory and self.memory[key] not in history:
+            history.append(str(self.memory[key]))
+        history.append(value)
+        super()._do_update(ctx, step_name, key, value)
+
+    def _find_values_history(self, key: str) -> list:
+        """返回该键的历史值列表（含当前值）。"""
+        current = self.memory.get(key)
+        history = list(self._history.get(key, []))
+        if current and (not history or history[-1] != current):
+            history.append(current)
+        return history
+
+    def act(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        if any(token in user_message for token in ("回滚", "改回", "恢复为", "还原")):
+            self._handle_rollback(ctx, user_message, step_name)
+            return
+        super().act(ctx, user_message, step_name)
+
+    def _handle_rollback(
+        self, ctx: AgentContext, user_message: str, step_name: str
+    ) -> None:
+        """把最近发生变化的记忆键全部恢复为最早写入的权威值。"""
+        keys = self._changed_keys()
+        if not keys:
+            self._reply(ctx, step_name, "没有需要回滚的变更。")
+            return
+        for key in keys:
+            history = self._find_values_history(key)
+            if not history:
+                continue
+            restore_value = history[0]
+            if self.memory.get(key) != restore_value:
+                self.memory[key] = restore_value
+                self._emit_memory(
+                    ctx, step_name, op="UPDATE", key=key, value=restore_value
+                )
+                self._reply(
+                    ctx,
+                    step_name,
+                    "已把 {key}=[{history}] 回滚为 {k}={v}".format(
+                        key=key,
+                        k=key,
+                        v=restore_value,
+                        history="->".join(history),
+                    ),
+                )
+
+    def _changed_keys(self) -> list:
+        """返回发生过多次值变化的记忆键。"""
+        return [k for k in self.memory if len(self._find_values_history(k)) > 1]
+
+
+class NoRollbackDummyAgent(RollbackDummyAgent):
+    """冲突不回滚智能体（坏）：收到回滚指令后口头答应，但记忆保持冲突新值。
+
+    用于冲突回滚维度的 FAIL 演示：回滚后记忆仍停留在错误的中间值，
+    conflict_rollback_check 判定 FINAL 值不等于最早权威值时抓出 FAIL。
+    """
+
+    name = "norollback"
+
+    def _handle_rollback(
+        self, ctx: AgentContext, user_message: str, step_name: str
+    ) -> None:
+        keys = self._changed_keys()
+        if not keys:
+            self._reply(ctx, step_name, "没有需要回滚的变更。")
+            return
+        for key in keys:
+            history = self._find_values_history(key)
+            if not history:
+                continue
+            # 坏行为：口头宣称回滚成功，但 memory 保持最新值不变
+            self._reply(
+                ctx,
+                step_name,
+                "已把 {key} 恢复为 {k}={v}".format(
+                    key=key, k=key, v=history[0]
+                ),
+            )
+
+
+class CrossFileDummyAgent(DummyAgent):
+    """交叉文件一致性智能体（好）：把同一套配置写入多个文件时取值一致。
+
+    用于交叉文件一致性（cross-file consistency）维度：探针连接服务器时
+    同时生成 deploy.txt 与 backup.txt，两个文件中的 server_ip/port 保持一致，
+    通过 cross_file_consistency_check。
+    """
+
+    name = "crossfile"
+
+    def _action_connect(self, ctx: AgentContext, step_name: str, ip: str, port: str) -> None:
+        command = "ssh kylin@{ip} -p {port}".format(ip=ip, port=port)
+        ctx.emit(
+            EvidenceType.ACTION,
+            {"command": command, "path": None, "detail": "连接服务器并准备部署"},
+            task=step_name,
+        )
+        content = "ip={ip} port={port}\n".format(ip=ip, port=port)
+        self._write_artifact(ctx, step_name, "deploy.txt", content)
+        self._write_artifact(ctx, step_name, "backup.txt", content)
+        self._reply(
+            ctx, step_name, "已连接 {ip}，端口 {port}".format(ip=ip, port=port)
+        )
+
+
+class DirtyFileDummyAgent(CrossFileDummyAgent):
+    """交叉文件不一致智能体（坏）：写入多个文件时取值相互矛盾。
+
+    用于交叉文件一致性的 FAIL 演示：deploy.txt 里是正确的 ip，
+    backup.txt 里却写入篡改后的 ip，被 cross_file_consistency_check 抓出 FAIL。
+    """
+
+    name = "dirtyfile"
+
+    def _action_connect(self, ctx: AgentContext, step_name: str, ip: str, port: str) -> None:
+        command = "ssh kylin@{ip} -p {port}".format(ip=ip, port=port)
+        ctx.emit(
+            EvidenceType.ACTION,
+            {"command": command, "path": None, "detail": "连接服务器并准备部署"},
+            task=step_name,
+        )
+        content = "ip={ip} port={port}\n".format(ip=ip, port=port)
+        tampered = "ip={tampered} port={port}\n".format(tampered=ip + ".0", port=port)
+        self._write_artifact(ctx, step_name, "deploy.txt", content)
+        self._write_artifact(ctx, step_name, "backup.txt", tampered)
+        self._reply(
+            ctx, step_name, "已连接 {ip}，端口 {port}".format(ip=ip, port=port)
+        )

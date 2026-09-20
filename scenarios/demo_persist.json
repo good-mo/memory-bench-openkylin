@@ -1,0 +1,43 @@
+{
+  "id": "demo_persist",
+  "name": "跨会话持久化（cross-session）",
+  "dimension": "cross-session",
+  "seed": 29,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-day1",
+      "description": "第一天：用户把服务器配置告知智能体，要求长期记住",
+      "session": "day1",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "10.10.1.50", "port": "2222"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-day1",
+      "description": "第一天：整理桌面文件（无关任务）",
+      "session": "day1"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-day2-connect",
+      "description": "第二天：连接服务器进行例行检查，服务器信息来自昨天的对话",
+      "session": "day2",
+      "expected": {"server_ip": "10.10.1.50"}
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-day2",
+      "description": "第二天：查看系统进程（无关任务）",
+      "session": "day2"
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-day3-report",
+      "description": "第三天：再次连接服务器并生成部署清单",
+      "session": "day3",
+      "expected": {"server_ip": "10.10.1.50", "port": "2222"}
+    }
+  ]
+}

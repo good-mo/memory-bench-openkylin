@@ -51,15 +51,30 @@ class Orchestrator:
         self.seed = seed
 
     def run(self) -> RunResult:
-        """按步骤执行场景并固化证据与报告。"""
-        session = "session-{sid}-{seed}".format(
+        """按步骤执行场景并固化证据与报告。
+
+        支持跨会话场景：若有任意 step 显式指定 session，则按 session 分组，
+        会话切换时把上一会话的 agent 记忆快照落盘（state_dir）、载入新会话状态，
+        从而评测「跨会话持久化」维度。所有步骤的 session 未指定时退化为单会话。
+        """
+        base_session = "session-{sid}-{seed}".format(
             sid=self.scenario.id, seed=self.seed
         )
+        state_dir = Path(self.store.path).parent / "states"
+        self.agent.memory = dict(
+            getattr(self.agent, "memory", {}) or {}
+        )
+
+        has_sessions = any(
+            step.session for step in self.scenario.steps if step.session
+        )
+        session = base_session
         ctx = AgentContext(
             store=self.store,
             workspace=self.workspace,
             session=session,
             seed=self.seed,
+            state_dir=state_dir,
         )
 
         self._emit(
@@ -70,6 +85,25 @@ class Orchestrator:
         )
 
         for step in self.scenario.steps:
+            next_session = step.session or session
+            if has_sessions and next_session != session:
+                self.agent.save_state(ctx, session)
+                session = next_session
+                ctx = AgentContext(
+                    store=self.store,
+                    workspace=self.workspace,
+                    session=session,
+                    seed=self.seed,
+                    state_dir=state_dir,
+                )
+                self.agent.load_state(ctx, session)
+                self._emit(
+                    ctx,
+                    EvidenceType.CHECKPOINT,
+                    {"phase": "session_start", "session": session},
+                    source=Source.HARNESS,
+                )
+
             self._emit(
                 ctx,
                 EvidenceType.CHECKPOINT,
@@ -96,6 +130,9 @@ class Orchestrator:
                     source=Source.USER,
                 )
                 self.agent.act(ctx, user_message, step.name)
+
+        if has_sessions:
+            self.agent.save_state(ctx, session)
 
         self._emit(
             ctx,
@@ -166,9 +203,15 @@ class Orchestrator:
 
     @staticmethod
     def _build_update_message(step) -> str:
-        """把更新事实组装成 "请把 k 改为 k=v" 消息（key 后面紧邻 = 便于脚本化 agent 解析）。"""
+        """把更新事实组装成 "请把 k 改为 k=v" 消息（key 后面紧邻 = 便于脚本化 agent 解析）。
+
+        若步骤带 rollback 标志，则改述为「回滚到最初值」，触发智能体的回滚逻辑。
+        """
         parts = []
         for fact in step.facts:
             for key, value in fact.fields.items():
                 parts.append("{k} 改为 {k}={v}".format(k=key, v=value))
-        return "请更新配置：" + "；".join(parts) + "（重要，务必记录最新值）"
+        prefix = "请回滚配置：" if getattr(step, "rollback", False) else "请更新配置："
+        if getattr(step, "rollback", False):
+            return prefix + "；".join(parts) + "（把 key 恢复为最初权威值，务必记录最新值）"
+        return prefix + "；".join(parts) + "（重要，务必记录最新值）"

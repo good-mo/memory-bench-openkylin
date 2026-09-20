@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 from memory_bench.evidence.consistency import CheckResult
 from memory_bench.evidence.model import EvidenceEvent, EvidenceType
 from memory_bench.evidence.store import EvidenceStore
+from memory_bench.report.forgetting import compute_forgetting_curve
 from memory_bench.scenarios.types import Scenario
 
 _HTML_TITLE = "openKylin 智能体长期记忆评测报告"
@@ -36,6 +37,14 @@ th { background: #f0f3f6; }
                 color: #0969da; margin-right: 8px; }
 .tl-item .src {} 
 .meta { color: #57606a; font-size: 12px; }
+.fc-card { margin: 10px 0; }
+.fc-card h3 { font-size: 13px; margin: 8px 0; }
+.fc-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; }
+.fc-bucket { width: 30px; color: #57606a; font-family: Menlo, Consolas, monospace; }
+.fc-track { flex: 1; background: #eaeef2; border-radius: 3px; height: 12px; overflow: hidden; }
+.fc-bar { display: block; height: 12px; background: #0969da; border-radius: 3px; }
+.fc-num { width: 34px; text-align: right; font-family: Menlo, Consolas, monospace; }
+.fc-sess { width: 80px; text-align: right; }
 footer { margin-top: 32px; text-align: center; color: #8c959f; font-size: 12px; }
 """
 
@@ -94,6 +103,7 @@ def build_report(
             "by_type": ev_by_type,
         },
         "consistency": [c.to_dict() for c in checks],
+        "forgetting_curves": compute_forgetting_curve(store, scenario),
         "steps": [
             {
                 "type": s.type.value,
@@ -138,6 +148,7 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
     check_rows = "".join(_render_check_row(c) for c in data["consistency"])
     timeline = "".join(_render_timeline_item(ev) for ev in events)
     step_section = _render_steps(data["steps"])
+    forgetting_section = _render_forgetting(data.get("forgetting_curves") or [])
 
     return """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -179,6 +190,12 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
   </div>
 
   <div class="card">
+    <h2>遗忘曲线统计</h2>
+    <p class="meta">按时间窗聚合每个记忆键被行为引用的频率，观察记忆是否随时间衰减。</p>
+    {forgetting_section}
+  </div>
+
+  <div class="card">
     <h2>证据流时间线</h2>
     <div class="timeline">{timeline}</div>
   </div>
@@ -197,6 +214,7 @@ def _render_html(data: Dict[str, Any], events: List[EvidenceEvent]) -> str:
         stat_rows=stat_rows,
         check_rows=check_rows,
         step_section=step_section,
+        forgetting_section=forgetting_section,
         timeline=timeline,
     )
 
@@ -262,3 +280,36 @@ def _render_steps(steps: List[Dict[str, Any]]) -> str:
             )
         )
     return "<ol>" + "".join(rows) + "</ol>"
+
+
+def _render_forgetting(curves: List[Dict[str, Any]]) -> str:
+    """渲染遗忘曲线统计卡片内容（表格 + 简易 SVG 条形图）。"""
+    if not curves:
+        return '<p class="meta">当前会话无遗忘曲线数据。</p>'
+    sections = []
+    for curve in curves:
+        key = html.escape(str(curve["key"]))
+        trend = html.escape(str(curve.get("trend", "none")))
+        total_refs = int(curve.get("total_references", 0))
+        buckets = curve.get("buckets", [])
+        max_refs = max((b.get("references", 0) for b in buckets), default=1) or 1
+        bars = []
+        for b in buckets:
+            refs = int(b.get("references", 0))
+            width = int(refs * 100 / max_refs)
+            session = html.escape(str(b.get("session") or "-"))
+            bars.append(
+                '<div class="fc-row"><span class="fc-bucket">b{}</span>'
+                '<span class="fc-track"><span class="fc-bar" style="width:{}%"></span></span>'
+                '<span class="fc-num">{}</span><span class="meta fc-sess">[{}]</span></div>'.format(
+                    int(b.get("bucket", 0)), width, refs, session
+                )
+            )
+        sections.append(
+            '<div class="fc-card">'
+            "<h3>{key} <span class=\"meta\">总引用 {total_refs} 次｜趋势：{trend}</span></h3>"
+            "{bars}</div>".format(
+                key=key, total_refs=total_refs, trend=trend, bars="".join(bars)
+            )
+        )
+    return "".join(sections)

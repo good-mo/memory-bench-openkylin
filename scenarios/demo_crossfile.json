@@ -1,0 +1,28 @@
+{
+  "id": "demo_crossfile",
+  "name": "交叉文件一致性（cross-file）",
+  "dimension": "cross-file-consistency",
+  "seed": 37,
+  "steps": [
+    {
+      "type": "INJECT",
+      "name": "inject-server",
+      "description": "注入服务器连接配置",
+      "facts": [
+        {"id": "server_cfg", "fields": {"server_ip": "172.16.8.20", "port": "8822"}}
+      ]
+    },
+    {
+      "type": "DISTRACT",
+      "name": "distract-ls",
+      "description": "查看当前目录",
+      "facts": []
+    },
+    {
+      "type": "PROBE",
+      "name": "probe-dual-file",
+      "description": "连接服务器，并把部署配置同时写入 deploy.txt 与 backup.txt 两个文件",
+      "expected": {"server_ip": "172.16.8.20"}
+    }
+  ]
+}

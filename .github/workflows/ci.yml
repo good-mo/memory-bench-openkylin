@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 单元测试
+        run: python -m unittest discover -s tests -v
+
+      - name: 全场景跑批（dummy 智能体，无需外部 API）
+        run: bash run_all_scenarios.sh --keep-out
+
+      - name: seed 扰动鲁棒性演示
+        run: |
+          python -m memory_bench.runner bench --scenario demo_recall --agent dummy --seeds 1,2,3 --outdir out/ci-bench
+
+      - name: 校验跑批摘要包含全部场景
+        run: |
+          test -f out/run_matrix.log
+          grep -q "六维矩阵汇总" out/run_matrix.log
