@@ -171,5 +171,144 @@ class TestOpenKylinAuditLink(OpenKylinAdapterTestBase):
         self.assertEqual(audit_actions[0].metadata["audit_backend"], "replay")
 
 
+class TestOpenKylinAgentDbusBackend(OpenKylinAdapterTestBase):
+    """backend=dbus：经私有 D-Bus 总线接入真实 openKylin AI 助手。"""
+
+    def _start_server(self, replies=None, **kwargs):
+        from tests.fake_dbus_server import FakeAssistantDBusServer
+
+        server = FakeAssistantDBusServer(replies=replies, **kwargs)
+        server.start()
+        self.addCleanup(server.stop)
+        return server
+
+    def _dbus_agent(self, server, mode="auto", timeout=5, **kwargs):
+        return OpenKylinAgent(
+            seed=1,
+            backend="dbus",
+            dbus_address=server.address(),
+            mode=mode,
+            timeout=timeout,
+            **kwargs,
+        )
+
+    def test_dbus_backend_mb_memory(self):
+        server = self._start_server(
+            replies=['MB|MEMORY|{"op":"WRITE","key":"port","value":"7777"}']
+        )
+        agent = self._dbus_agent(server, mode="mb")
+        events = self.run_once(agent, user_message="记住 port=7777")
+        memories = [e for e in events if e.type == EvidenceType.MEMORY]
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0].content["key"], "port")
+        self.assertEqual(memories[0].content["value"], "7777")
+        agent.close_dbus()
+
+    def test_dbus_backend_json_mode(self):
+        server = self._start_server(
+            replies=[
+                '{"memory_update":[{"op":"WRITE","key":"ip","value":"10.1.1.1"}],'
+                ' "reply":"已记住"}'
+            ]
+        )
+        agent = self._dbus_agent(server, mode="json")
+        events = self.run_once(agent, user_message="记住 ip=10.1.1.1")
+        memories = [e for e in events if e.type == EvidenceType.MEMORY]
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0].content["value"], "10.1.1.1")
+        agent.close_dbus()
+
+    def test_dbus_backend_text_heuristic(self):
+        server = self._start_server(replies=["好的，记住 server_ip=9.8.7.6"])
+        agent = self._dbus_agent(server, mode="text")
+        events = self.run_once(agent, user_message="记住 server_ip=9.8.7.6")
+        memories = [e for e in events if e.type == EvidenceType.MEMORY]
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0].content["value"], "9.8.7.6")
+        agent.close_dbus()
+
+    def test_dbus_backend_init_once_session_reuse(self):
+        server = self._start_server(replies=["回复一", "回复二"])
+        agent = self._dbus_agent(server, mode="text")
+        self.run_once(agent, user_message="一", step_name="step1")
+        self.run_once(agent, user_message="二", step_name="step2")
+        agent.close_dbus()
+        self.assertEqual(server.init_count, 1)
+        self.assertEqual(
+            [m for m in server.members_seen if m != "init"],
+            ["chat", "chat"],
+        )
+        init_request_bodies = [b for m, b in server.received if m == "init"]
+        self.assertEqual(init_request_bodies, [()])  # init 无入参
+
+    def test_dbus_backend_chat_payload_contract(self):
+        server = self._start_server(replies=["ok"])
+        agent = self._dbus_agent(server, mode="text")
+        self.run_once(agent, user_message="你好呀 openKylin")
+        agent.close_dbus()
+        for member, body in server.received:
+            if member == "chat":
+                message, session_id = body
+                payload = json.loads(message)
+                self.assertEqual(payload["content"][0]["type"], "text")
+                self.assertEqual(payload["content"][0]["text"], "你好呀 openKylin")
+                self.assertEqual(session_id, 42)
+
+    def test_dbus_backend_timeout_falls_back_to_dialogue(self):
+        server = self._start_server(replies=["迟到"], reply_delay=3.0)
+        agent = self._dbus_agent(server, mode="text", timeout=1)
+        events = self.run_once(agent, user_message="hello")
+        dialogues = [e for e in events if e.type == EvidenceType.DIALOGUE]
+        self.assertEqual(len(dialogues), 1)
+        self.assertIn("未收到 ChatResult 信号", dialogues[0].content["text"])
+        agent.close_dbus()
+
+    def test_dbus_backend_init_failure_falls_back_to_dialogue(self):
+        server = self._start_server(init_error_code=1, init_error_message="模型未就绪")
+        agent = self._dbus_agent(server, mode="text", timeout=5)
+        events = self.run_once(agent, user_message="hello")
+        dialogues = [e for e in events if e.type == EvidenceType.DIALOGUE]
+        self.assertEqual(len(dialogues), 1)
+        self.assertIn("模型未就绪", dialogues[0].content["text"])
+        agent.close_dbus()
+
+    def test_default_backend_is_dbus(self):
+        from memory_bench.runner import make_agent
+
+        previous = None
+        import os
+
+        previous = os.environ.pop("MK_OK_BACKEND", None)
+        try:
+            agent = OpenKylinAgent(seed=1)
+            self.assertEqual(agent.backend, "dbus")
+            self.assertTrue(
+                agent.dbus_address.startswith(
+                    "unix:path=/tmp/.kylin-ai-runtime-unix/"
+                )
+            )
+        finally:
+            if previous is not None:
+                os.environ["MK_OK_BACKEND"] = previous
+        agent = make_agent("openkylin", 1)
+        self.assertEqual(agent.backend, "dbus")
+
+    def test_extract_chat_text(self):
+        extract = OpenKylinAgent._extract_chat_text
+        self.assertEqual(extract('{"content":[{"type":"text","text":"hello"}]}'), "hello")
+        self.assertEqual(
+            extract(
+                '{"content":[{"type":"text","text":{"sentence_id":1,"result":"hi"}}]}'
+            ),
+            "hi",
+        )
+        self.assertEqual(
+            extract('{"content":[{"type":"text","text":{"sentence_id":1,"result":"a"}},'
+                    '{"type":"text","text":"b"}]}'),
+            "a\nb",
+        )
+        self.assertEqual(extract("not-json"), "not-json")
+
+
 if __name__ == "__main__":
     unittest.main()

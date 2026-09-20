@@ -33,6 +33,7 @@
 | 内置场景 | `memory_bench/scenarios/library.py` | 十三个演示场景（六维 + 跨会话/回滚/交叉文件 + 遗忘指令/openKylin 配置 + 外部工具） |
 | 沙箱 | `memory_bench/harness/sandbox.py` | 工作区快照 / 回滚 |
 | OS 审计采集 | `memory_bench/audit/` | systemd journal / auditd / 进程快照 / 工作区文件差异 / 离线重放（新） |
+| D-Bus 客户端 | `memory_bench/dbus/` | 纯标准库 D-Bus wire 协议 + EXTERNAL 认证客户端（接入 openKylin AI 子系统私有总线，真实接口） |
 | 智能体协议 | `memory_bench/harness/agent.py` | Agent 抽象 + AgentContext 证据发射 + 跨会话状态钩子 |
 | 编排器 | `memory_bench/harness/orchestrator.py` | 注入 → 演化 → 探针 → 固化 + 跨会话调度 + 审计联动 |
 | 报告 | `memory_bench/report/generator.py` | JSON + 自包含 HTML（内联 CSS，含遗忘曲线 + 能力维度评分卡片） |
@@ -43,7 +44,7 @@
 | 鲁棒性 | `memory_bench/robustness.py` | seed 扰动矩阵与稳定率聚合（M5） |
 | CLI | `memory_bench/runner.py` | `run` / `bench` / `serve` 三个子命令 |
 | 演示智能体 | `agents/` | Dummy 系列 + DeepSeek + 外部 Adapter + openKylin 适配器 + 遗忘/openKylin 配置/工具调用变体（见下） |
-| 测试 | `tests/` | 标准库 unittest，12 个测试文件 136 用例 |
+| 测试 | `tests/` | 标准库 unittest，14 个测试文件 159 用例 |
 
 ## 快速开始
 
@@ -154,6 +155,7 @@ memory-bench-openkylin/
 │   ├── evidence/               # 证据模型 / 存储 / 一致性校验（十条规则）
 │   ├── tools/                  # OAS/OpenAPI 工具契约解析（M7）
 │   ├── audit/                  # OS 侧审计采集层：journal/auditd/进程/文件差异/重放
+│   ├── dbus/                   # 纯标准库 D-Bus 客户端（真实 openKylin 私有总线接入）
 │   ├── scenarios/              # 场景建模 / 内置场景库
 │   ├── harness/                # 沙箱 / 智能体协议 / 编排器（跨会话调度 + 审计联动）
 │   ├── report/                 # 报告生成（含遗忘曲线 forgetting.py）
@@ -162,10 +164,11 @@ memory-bench-openkylin/
 ├── agents/dummy_agent.py       # 演示智能体（好/坏系列共 17 个）
 ├── agents/deepseek_agent.py    # 真实 LLM 智能体（OpenAI 兼容 HTTP）
 ├── agents/adapter_agent.py     # 通用外部智能体适配器（JSONL 协议）
-├── agents/openkylin_adapter.py # openKylin 智能体框架适配器（HTTP/CLI + 审计联动）
+├── agents/openkylin_adapter.py # openKylin 智能体框架适配器（D-Bus/HTTP/CLI + 审计联动）
 ├── scenarios/*.json            # 演示场景定义（运行时优先磁盘文件）
 ├── scenarios/openapi/*.json    # OAS/OpenAPI 工具契约文档（M7）
-├── tests/                      # unittest 测试（136 用例）
+├── protocols/kylin-ai/         # openKylin AI 子系统官方 gdbus 协议定义（assistantservice.xml）
+├── tests/                      # unittest 测试（159 用例）
 └── examples/evidence_sample.ndjson  # 人工示例证据
 ```
 
@@ -303,6 +306,11 @@ python3 -m memory_bench.runner run --scenario demo_update --agent dummy \
 
 **动机**：把 openKylin 智能体操作系统上运行的智能体无缝接入评测。
 
+- `backend="dbus"`（**默认**）：经私有 D-Bus 总线直连 openKylin AI 子系统的助手服务
+  `com.kylin.AiRuntime.Assistant`（真实协议定义见 `protocols/kylin-ai/assistantservice.xml`，
+  实现取自 Gitee 官方仓 `openkylin/kylin-ai-runtime`）；初始化即建立会话，`chat()` 携带
+  `{"content":[{"type":"text","text":"..."}]}` JSON 异步调用，回复经
+  `ChatResult` 信号（接口名 `com.kylin.AiRuntime.Assistant<sessionId>`）推送、自动提取文本；
 - `backend="http"`：调用 openKylin 智能体服务 API（OpenAI 兼容或自定义 REST），
   请求体模板替换 `{user_message}` / `{memory_json}` / `{system_prompt}`；
 - `backend="process"`：调用 openKylin 智能体 CLI 入口，命令含 `{user_message}`
@@ -312,12 +320,39 @@ python3 -m memory_bench.runner run --scenario demo_update --agent dummy \
 - **审计联动**：传入 `audit_collector` 后每次 act 结束自动采集 OS 侧证据，
   让「智能体自证 ↔ OS 客观证据」在同一次交互里交叉印证。
 
+### 真实环境接入（D-Bus 私有总线）
+
+openKylin AI 子系统（kylin-ai-runtime）用 GLib `GDBusServer` 监听 Unix socket
+（**peer-to-peer 私有总线**，非系统/会话总线），EXTERNAL 认证，地址为
+`/tmp/.kylin-ai-runtime-unix/<uid>/assistant.sock`。接入流程：
+
+1. 服务端 `Connection: socket` → 客户端发送 NUL + `AUTH EXTERNAL <hex uid>`，
+   收到 `OK <guid>` 后发送 `BEGIN` 进入消息阶段；
+2. `init()` 建会话，出参 `(session_Id:i, error_code:i, error_message:s)`；
+3. `chat(message:s, session_Id:i)` 立即返回，真实回复由服务端经 D-Bus **信号**
+   `ChatResult` 异步推送（接口名 `com.kylin.AiRuntime.Assistant<sessionId>`，
+   对象路径 `/com/kylin/AiRuntime/Assistant`，载荷 `(result_json:s, 0:i)`）；
+4. 从结果 JSON 的 `content[].text.text.result` 提取智能体回复文本交三模式翻译。
+
+本仓库的 `memory_bench/dbus/` 用纯标准库实现 wire 协议（对齐规则与 gdbus/GVariant
+一致）、EXTERNAL 认证与信号监听，`OpenKylinAgent` 默认即走该路径；
+`tests/fake_dbus_server.py` 是按真实源码行为实现的假服务端，提供端到端单测
+（含超时兜底、init 失败兜底、会话复用）。
+
 ```bash
-# HTTP 方式接入 openKylin 智能体服务
-export MK_OK_URL=http://127.0.0.1:8080/v1/chat/completions
-export MK_OK_TOKEN=xxx
+# 真实 openKylin 环境：默认即 D-Bus 接入（自动探测当前用户 socket）
 python3 -m memory_bench.runner run --scenario demo_update --agent openkylin \
     --audit journal,process,filesystem
+
+# 自定义 socket 地址（如以指定 uid 启动的会话级服务）
+export MK_OK_DBUS_ADDRESS=unix:path=/tmp/.kylin-ai-runtime-unix/1000/assistant.sock
+python3 -m memory_bench.runner run --scenario demo_update --agent openkylin
+
+# HTTP 方式接入 openKylin 智能体服务
+export MK_OK_BACKEND=http
+export MK_OK_URL=http://127.0.0.1:8080/v1/chat/completions
+export MK_OK_TOKEN=xxx
+python3 -m memory_bench.runner run --scenario demo_update --agent openkylin
 
 # CLI 方式接入（openKylin 智能体可执行入口）
 export MK_OK_BACKEND=process
@@ -325,8 +360,8 @@ export MK_OK_CMD="/usr/bin/openkylin-agent {user_message}"
 python3 -m memory_bench.runner run --scenario demo_update --agent openkylin
 ```
 
-配置前缀 `MK_OK_*`：`MK_OK_BACKEND / MK_OK_CMD / MK_OK_URL / MK_OK_METHOD /
-MK_OK_TOKEN / MK_OK_TEMPLATE / MK_OK_MODE / MK_OK_TIMEOUT /
+配置前缀 `MK_OK_*`：`MK_OK_BACKEND / MK_OK_DBUS_ADDRESS / MK_OK_CMD / MK_OK_URL /
+MK_OK_METHOD / MK_OK_TOKEN / MK_OK_TEMPLATE / MK_OK_MODE / MK_OK_TIMEOUT /
 MK_OK_SYSTEM_PROMPT / MK_OK_PROMPT_PREFIX / MK_OK_OUTPUT`。
 跨会话持久化复用 Agent 基类 `save_state` / `load_state`，可直接参与 M3 跨会话评测。
 
@@ -336,7 +371,7 @@ MK_OK_SYSTEM_PROMPT / MK_OK_PROMPT_PREFIX / MK_OK_OUTPUT`。
 |--------|------|-----------|
 | `dummy` | 完整保留记忆并在后续任务正确引用 | 好 |
 | `deepseek` / `adapter` | 真实 LLM / 外部智能体 | 真实 |
-| `openkylin` | openKylin 智能体框架适配器（HTTP/CLI + 审计联动） | 真实 |
+| `openkylin` | openKylin 智能体框架适配器（D-Bus 私有总线 / HTTP / CLI + 审计联动） | 真实 |
 | `sessiondummy` | 跨会话保留记忆 | 好（M3） |
 | `amnesia` | 每会话开始时遗忘先前记忆 | 坏（M3） |
 | `rollback` | 冲突后回滚到权威值 | 好（M3） |

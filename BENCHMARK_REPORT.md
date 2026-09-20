@@ -118,8 +118,14 @@ M6 把 FAIL/WARN 进一步归类为五种可解释的长期记忆异常，不依
   扩展），解析已覆盖 `parameters` 与 `requestBody` schema；若被测 agent 不按契约声明的
   operationId 调用（改名、合并成一条 shell 命令而非结构化 TOOL 事件），`tool_call_check` 会判 WARN
   （提及但无调用）而非 FAIL——这是「有契约才能校验」的已知取舍
-- **真实环境未闭环**：当前为模拟 harness 驱动（脚本化 agent / 真实 LLM API）+ openKylin 适配器，
-  OS 审计证据来自采集器（journal/进程/文件差异）与离线重放，尚未在真实 openKylin 桌面环境闭环运行
+- **真实环境接入进展**：openKylin 适配器已完成对 AI 子系统**真实 D-Bus 私有总线**的接入
+  （`memory_bench/dbus/` 纯标准库客户端，EXTERNAL 认证 + `init/chat` + `ChatResult` 信号，
+  协议定义与实现均取自 Gitee 官方仓 kylin-ai-proto / kylin-ai-runtime，见
+  `protocols/kylin-ai/assistantservice.xml`），并以按真实源码行为实现的假服务端
+  （`tests/fake_dbus_server.py`）完成端到端单测（会话建立、异步信号取回、超时/初始化失败兜底，
+  共 159 用例全绿）；**尚未在真实 openKylin 桌面环境闭环运行**——沙箱为 openEuler，
+  无 `$(id -u)` 会话级 assistant.sock 可连，需在装有 kylin-ai-runtime 的 openKylin 上
+  以 `--agent openkylin`（默认 `backend=dbus`）实测
 
 ## 6. 运行方式
 
@@ -136,6 +142,10 @@ python3 -m memory_bench.runner run --scenario demo_ok_config --agent okconfig --
 
 # M7 外部工具调用（OAS 契约）
 python3 -m memory_bench.runner run --scenario demo_tool --agent tooldummy --seed 42
+
+# 真实 openKylin：D-Bus 私有总线接入 AI 子系统（默认 backend=dbus，自动探测会话 socket）
+python3 -m memory_bench.runner run --scenario demo_update --agent openkylin
+# 可覆盖地址：export MK_OK_DBUS_ADDRESS=unix:path=/tmp/.kylin-ai-runtime-unix/<uid>/assistant.sock
 
 # 报告网页服务
 python3 -m memory_bench.runner serve --dir out --port <端口>

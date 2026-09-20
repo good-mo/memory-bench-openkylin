@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+    <interface name="com.kylin.AiRuntime.Assistant">
+        <method name="init">
+            <arg name="session_Id" type="i" direction="out" />
+            <arg name="error_code" type="i" direction="out" />
+            <arg name="error_message" type="s" direction="out" />
+        </method>
+	    <method name="initWithChatHistory">
+            <arg name="messages" type="s" direction="in" />
+            <arg name="prompt_id" type="i" direction="in" />
+            <arg name="session_Id" type="i" direction="out" />
+            <arg name="error_code" type="i" direction="out" />
+            <arg name="error_message" type="s" direction="out" />
+        </method>
+        <method name="supportedFeatures">
+            <arg name="session_Id" type="i" direction="in" />
+            <arg name="features" type="i" direction="out" />
+        </method>
+        <method name="chat">
+            <arg name="message" type="s" direction="in" />
+            <arg name="session_Id" type="i" direction="in" />
+        </method>
+        <method name="stop_chat">
+            <arg name="session_Id" type="i" direction="in" />
+        </method>
+        <method name="set_prompt_id">
+            <arg name="session_Id" type="i" direction="in" />
+            <arg name="prompt_id" type="i" direction="in" />
+        </method>
+        <method name="clear_context">
+            <arg name="session_Id" type="i" direction="in" />
+        </method>
+        <method name="prompts">
+            <arg name="all_prompts" type="s" direction="out" />
+        </method>
+		<method name="create_prompt">
+            <arg name="prompt_name" type="s" direction="in" />
+            <arg name="prompt_content" type="s" direction="in" />
+            <arg name="prompt_id" type="i" direction="out" />
+        </method>
+		<method name="delete_prompt">
+            <arg name="prompt_id" type="i" direction="in" />
+            <arg name="success" type="b" direction="out" />
+        </method>
+		<method name="update_prompt">
+            <arg name="prompt_id" type="i" direction="in" />
+            <arg name="prompt_name" type="s" direction="in" />
+            <arg name="prompt_content" type="s" direction="in" />
+            <arg name="success" type="b" direction="out" />
+        </method>
+    </interface>
+</node>
