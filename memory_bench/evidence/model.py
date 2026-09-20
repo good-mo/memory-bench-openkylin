@@ -8,13 +8,14 @@ from typing import Any, Dict
 
 
 class EvidenceType(enum.Enum):
-    """证据事件的五类类型。"""
+    """证据事件的六类类型。"""
 
     DIALOGUE = "DIALOGUE"      # 对话
     MEMORY = "MEMORY"          # 记忆操作
     ACTION = "ACTION"          # 行动轨迹
     ARTIFACT = "ARTIFACT"      # 文件产物
     CHECKPOINT = "CHECKPOINT"  # 评测锚点
+    TOOL = "TOOL"              # 外部工具调用（OAS 契约驱动，M7）
 
 
 class MemoryOp(enum.Enum):

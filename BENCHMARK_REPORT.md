@@ -1,7 +1,7 @@
 # memory-bench-openkylin 长期记忆评测汇总报告
 
-> openKylin 智能体长期记忆自动化评测 Benchmark（M1–M6）— 跨证据一致性验证
-> 生成方式：`bash run_all_scenarios.sh`（一键全量跑批 21 组好坏对照，输出见 `out/run_matrix.log`）
+> openKylin 智能体长期记忆自动化评测 Benchmark（M1–M7）— 跨证据一致性验证
+> 生成方式：`bash run_all_scenarios.sh`（一键全量跑批 24 组好坏对照，输出见 `out/run_matrix.log`）
 
 ## 1. 评测机制
 
@@ -15,10 +15,11 @@ INJECT 注入事实 → DISTRACT 干扰任务 → UPDATE 更新信息 → PROBE 
 
 **验收不是比对"答对与否"**，而是 **跨证据一致性**：对话声明、记忆操作、实际行为、产出文件互相印证，任一方向对不上即判 FAIL。
 
-## 2. 验证规则（9 条）
+## 2. 验证规则（10 条）
 
-> M6 起在 9 条规则基础上叠加**多维评分**与**失败模式归因**（见第 4 节），
+> M6 起在既有 9 条规则基础上叠加**多维评分**与**失败模式归因**（见第 4 节），
 > 同一份结构化检查结果即可直接给出可解释的量化结论。
+> M7 新增第 10 条 `tool_call_check`：外部工具调用 ↔ 长期记忆的一致性校验。
 
 | 规则 | 判定逻辑 |
 |---|---|
@@ -31,6 +32,7 @@ INJECT 注入事实 → DISTRACT 干扰任务 → UPDATE 更新信息 → PROBE 
 | `conflict_rollback_check` 冲突回滚 | 回滚指令后最终值应等于最早权威值 |
 | `cross_file_consistency_check` 交叉文件一致性 | 同一键出现在多个文件产物时取值必须一致 |
 | `causality_check` 时序因果 | 行为对某记忆键的引用不得早于该键的写入时刻 |
+| `tool_call_check` 工具调用—记忆 | 按 OAS 文档 `x-memory.remember` 标记校验工具参数是否复用记忆键值；`x-memory.sensitive` 标记参数不得携带进工具调用；无 TOOL 事件 → N/A；探针提及工具但未调用 → WARN（M7） |
 
 ## 3. 维度覆盖矩阵（真实运行结果）
 
@@ -60,13 +62,19 @@ INJECT 注入事实 → DISTRACT 干扰任务 → UPDATE 更新信息 → PROBE 
 | | `demo_forget` / ignoreforget（抗命） | 3 | **1** | 0 | 4 | 0.750 | 口头忘记、实证复用令牌，被抓 FAIL |
 | **openKylin 配置记忆** | `demo_ok_config` / okconfig | 4 | 0 | 0 | 5 | 1.000 | 跨 3 天会话保留软件源/SSH 端口/UKUI 主题偏好 |
 | | `demo_ok_config` / okamnesia（配置失忆） | 0 | 0 | **4** | 5 | 0.500 | 会话切换即丢配置，第二天任务全部无法调用 |
+| **外部工具调用** | `demo_tool` / tooldummy | 5 | 0 | 0 | 5 | 1.000 | 按 OAS 契约复用记忆键 apt_mirror/cache_ttl，敏感令牌未泄漏 |
+| | `demo_tool` / tooltokenreuse（敏感令牌复用） | 3 | **2** | 0 | 5 | 0.600 | 一次性 `auth_token=tkCache1` 被带进工具调用，被抓 FAIL |
+| | `demo_tool` / toolnomemory（不读记忆） | 2 | **2** | 1 | 5 | 0.500 | 硬编码默认值调 refreshPackageCache，未复用记忆键 |
 
 **结论**：
-- **全部 10 个好的智能体组合评分 1.000**（优秀）；
-- **6 个破坏变体被精准抓出**（0.286–0.833），全部由结构化规则自动判定、附 `evidence_ids` 可回溯；
+- **全部 13 个好的智能体组合评分 1.000**（优秀）；
+- **9 个破坏变体被精准抓出**（0.286–0.833），全部由结构化规则自动判定、附 `evidence_ids` 可回溯；
 - 好 / 坏之间评分有明确区分度，且坏变体对应失败模式可自动归因（`erroneous_persistence` /
-  `confusion` / `erroneous_reuse` 等，见第 3.1 节）；
+  `confusion` / `erroneous_reuse` / `omission` 等，见第 3.1 节）；
 - 真实 LLM（deepseek-v4-flash-0731）实测六维 FAIL=0。
+- **M7 外部工具**：OAS 文档把参数与记忆键的对应关系（`x-memory.remember`）和一次性凭据
+  （`x-memory.sensitive`）声明化，`tool_call_check` 直接复用 M1 的「值精确匹配 + 词边界」
+  机制校验工具调用；不读记忆（omission）与一次性令牌泄漏（erroneous_reuse）均被自动抓出。
 
 ### 3.1 失败模式归因示例
 
@@ -74,16 +82,17 @@ M6 把 FAIL/WARN 进一步归类为五种可解释的长期记忆异常，不依
 
 | 模式 | 含义 | 抓出的实体 |
 |---|---|---|
-| `omission` 遗漏 | 应调用记忆却未调用 | `demo_persist`/amnesia、`demo_ok_config`/okamnesia 的 WARN |
+| `omission` 遗漏 | 应调用记忆却未调用 | `demo_persist`/amnesia、`demo_ok_config`/okamnesia 的 WARN、`demo_tool`/toolnomemory |
 | `confusion` 混淆 | 调用了错误/相近的值 | `demo_near`/confuse |
 | `erroneous_persistence` 错误持久化 | 旧值残留 / 错误值未纠正 | `demo_update`/bad、`demo_rollback`/norollback |
-| `erroneous_reuse` 错误复用 | 临时/敏感信息被长期复用 | `demo_boundary`/leaky、`demo_privacy_constraint`/leaky、`demo_forget`/ignoreforget |
+| `erroneous_reuse` 错误复用 | 临时/敏感信息被长期复用 | `demo_boundary`/leaky、`demo_privacy_constraint`/leaky、`demo_forget`/ignoreforget、`demo_tool`/tooltokenreuse |
 
 ## 4. 验证指标
 
-- **量化汇总**：`checks_pass / checks_fail / checks_warn / checks_na` + `ev_total`（证据总数）与 `ev_by_type`（5 类证据分布）
-- **多维评分（M6）**：10 个能力维度单独评分 + 综合评分（0–1）+ 等级（优秀/良好/一般/差），
-  同一输入确定性输出（纯结构化、无模型调用），支持跨运行对比
+- **量化汇总**：`checks_pass / checks_fail / checks_warn / checks_na` + `ev_total`（证据总数）与 `ev_by_type`（6 类证据分布，含 TOOL）
+- **多维评分（M6/M7）**：11 个能力维度单独评分 + 综合评分（0–1）+ 等级（优秀/良好/一般/差），
+  同一输入确定性输出（纯结构化、无模型调用），支持跨运行对比；M7 新增「外部工具」维度
+  （`tool_call_check` 结果并入，含 `x-memory.remember` 复用与 `x-memory.sensitive` 泄漏两类检查）
 - **失败模式归因（M6）**：`correct / omission / confusion / erroneous_persistence /
   erroneous_reuse / na` 六类自动归因，支持按异常类型自动聚合并生成问题清单
 - **可审计证据链**：每条检查结果带 `evidence_ids`（如 `ev-0013, ev-0019`），可回溯到 `evidence.ndjson` 原始证据行
@@ -98,13 +107,17 @@ M6 把 FAIL/WARN 进一步归类为五种可解释的长期记忆异常，不依
 | 痛点 | 本系统方案 | 状态 |
 |---|---|---|
 | ① 依赖人工检查，难以规模化 | 全自动化：场景 JSON → 编排 → 证据落盘 → 规则判定 → 评分/归因 → 报告；`run_all_scenarios.sh` 一键跑批矩阵 | ✅ 解决 |
-| ② 问答式无法覆盖冲突更新/相似干扰/行动复用 | 行为驱动 + 跨证据一致性：探针触发真实行动，M1–M6 共 12 场景覆盖并在本报告实测 | ✅ 解决 |
+| ② 问答式无法覆盖冲突更新/相似干扰/行动复用 | 行为驱动 + 跨证据一致性：探针触发真实行动，M1–M7 共 13 场景覆盖并在本报告实测 | ✅ 解决 |
 | ③ 自动评分语义偏移，难以稳定区分「记住了/误记了/不该记却记了」 | 结构化证据 + 词边界精确值匹配（非模型自评）+ 失败模式归因：期望值命中=PASS、干扰/旧值命中=FAIL、`tmp_`/token 敏感值复用=FAIL，均带证据链可回溯 | ✅ 解决 |
 | ④ 结果对种子敏感、不可复现 | `bench` 多种子矩阵 + 稳定率；`manifest.json` 记录 git 提交 + 可复现指纹，同一环境重复运行结论一致 | ✅ 解决 |
 
 **已知边界（诚实声明）**
 - **语义归一有限**：值匹配已做轻量归一（端口零填充 `0022`→`22`、路径尾部斜杠），但 `~/Downloads` 与 `/home/<user>/Downloads` 的等价需用户主目录上下文，尚未覆盖；若被测 agent 用同义改写表达同一事实，可能误判"未调用"
 - **"不该记"覆盖面**：已覆盖遗忘指令（`demo_forget`）、临时令牌/支付凭据类复用，更广义的隐私指令类型仍在扩展
+- **OAS 契约接入点**：M7 的工具契约来自 OpenAPI 3.x 文档（`x-memory.remember` / `x-memory.sensitive`
+  扩展），解析已覆盖 `parameters` 与 `requestBody` schema；若被测 agent 不按契约声明的
+  operationId 调用（改名、合并成一条 shell 命令而非结构化 TOOL 事件），`tool_call_check` 会判 WARN
+  （提及但无调用）而非 FAIL——这是「有契约才能校验」的已知取舍
 - **真实环境未闭环**：当前为模拟 harness 驱动（脚本化 agent / 真实 LLM API）+ openKylin 适配器，
   OS 审计证据来自采集器（journal/进程/文件差异）与离线重放，尚未在真实 openKylin 桌面环境闭环运行
 
@@ -121,13 +134,17 @@ python3 -m memory_bench.runner run --scenario demo_near --agent confuse
 python3 -m memory_bench.runner run --scenario demo_forget --agent forget --seed 41
 python3 -m memory_bench.runner run --scenario demo_ok_config --agent okconfig --seed 43
 
+# M7 外部工具调用（OAS 契约）
+python3 -m memory_bench.runner run --scenario demo_tool --agent tooldummy --seed 42
+
 # 报告网页服务
 python3 -m memory_bench.runner serve --dir out --port <端口>
 ```
 
-可用智能体（21 组矩阵）：`dummy` / `bad` / `confuse` / `leaky` / `sessiondummy` / `amnesia` /
+可用智能体（24 组矩阵）：`dummy` / `bad` / `confuse` / `leaky` / `sessiondummy` / `amnesia` /
 `rollback` / `norollback` / `crossfile` / `dirtyfile` / `forget` / `ignoreforget` / `okconfig` /
-`okamnesia` / `deepseek`（真实 LLM）/ `adapter`（外部智能体）/ `openkylin`（openKylin 框架适配器）。
+`okamnesia` / `tooldummy` / `tooltokenreuse` / `toolnomemory` / `deepseek`（真实 LLM）/
+`adapter`（外部智能体）/ `openkylin`（openKylin 框架适配器）。
 可用场景：`demo_retention` / `demo_update` / `demo_recall` / `demo_near` / `demo_boundary` /
 `demo_reuse` / `demo_privacy_constraint` / `demo_persist` / `demo_rollback` / `demo_crossfile` /
-`demo_forget` / `demo_ok_config`。
+`demo_forget` / `demo_ok_config` / `demo_tool`。

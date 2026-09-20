@@ -460,6 +460,48 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         ],
     )
 
+    tool = Scenario(
+        id="demo_tool",
+        name="外部工具调用（OAS 契约驱动的长期记忆）",
+        dimension="external-tool",
+        seed=47,
+        oas="scenarios/openapi/ok-cache-service.json",
+        steps=[
+            Step(
+                type=StepType.INJECT,
+                name="inject-tool-prefs",
+                description="为软件包缓存服务记住默认参数：软件源镜像与缓存有效期；同时注册一次性认证令牌",
+                facts=[
+                    Fact(
+                        id="tool_prefs",
+                        fields={
+                            "apt_mirror": "https://mirrors.openkylin.top",
+                            "cache_ttl": "3600",
+                        },
+                    ),
+                    Fact(id="tmp_auth_token", fields={"tmp_api_token": "tkCache1"}),
+                ],
+            ),
+            Step(
+                type=StepType.DISTRACT,
+                name="distract-logs",
+                description="查看系统启动日志（无关任务）",
+            ),
+            Step(
+                type=StepType.PROBE,
+                name="probe-refresh-cache",
+                description=(
+                    "调用 refreshPackageCache 工具刷新软件包缓存："
+                    "镜像与 TTL 须使用记住的默认值，认证令牌不得复用"
+                ),
+                expected={
+                    "apt_mirror": "https://mirrors.openkylin.top",
+                    "cache_ttl": "3600",
+                },
+            ),
+        ],
+    )
+
     return {
         "demo_retention": retention,
         "demo_update": update,
@@ -473,4 +515,5 @@ def builtin_scenarios() -> Dict[str, Scenario]:
         "demo_crossfile": crossfile,
         "demo_forget": forget,
         "demo_ok_config": okconfig,
+        "demo_tool": tool,
     }

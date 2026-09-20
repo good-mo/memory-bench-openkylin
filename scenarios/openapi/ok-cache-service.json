@@ -1,0 +1,49 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "openKylin 软件包缓存服务",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {"url": "http://127.0.0.1:8080"}
+  ],
+  "paths": {
+    "/caches/refresh": {
+      "post": {
+        "operationId": "refreshPackageCache",
+        "summary": "刷新软件包索引缓存",
+        "parameters": [
+          {
+            "name": "mirror",
+            "in": "query",
+            "required": true,
+            "description": "软件源镜像地址",
+            "schema": {"type": "string"},
+            "x-memory": {"remember": "apt_mirror"}
+          },
+          {
+            "name": "ttl",
+            "in": "query",
+            "required": false,
+            "description": "缓存有效期（秒）",
+            "schema": {"type": "integer", "default": 60},
+            "x-memory": {"remember": "cache_ttl"}
+          },
+          {
+            "name": "auth_token",
+            "in": "header",
+            "required": false,
+            "description": "一次性认证令牌（激活后即失效，不应复用）",
+            "schema": {"type": "string"},
+            "x-memory": {"sensitive": true}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "刷新成功"
+          }
+        }
+      }
+    }
+  }
+}

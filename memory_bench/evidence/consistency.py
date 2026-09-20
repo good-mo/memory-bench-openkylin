@@ -982,6 +982,175 @@ def causality_check(
 
 
 # ---------------------------------------------------------------------------
+# 规则十：工具调用长期记忆校验（tool-call，M7）
+# ---------------------------------------------------------------------------
+
+def _scenario_oas_tools(scenario: Optional[Scenario]):
+    """从场景里解析 OAS 工具契约；无 OAS 文档返回 None。
+
+    场景类型新增 oas 字段（OpenAPI 文档 dict 或文件路径字符串），
+    供 tool_call_check 定位工具与 x-memory 参数标记。
+    """
+    if scenario is None:
+        return None
+    oas = getattr(scenario, "oas", None)
+    if not oas:
+        return None
+    from memory_bench.tools.oas import load_oas, parse_oas
+
+    if isinstance(oas, str):
+        try:
+            return load_oas(oas)
+        except (OSError, ValueError):
+            return None
+    if isinstance(oas, dict):
+        try:
+            return parse_oas(oas)
+        except ValueError:
+            return None
+    return None
+
+
+def tool_call_check(
+    store: EvidenceStore, scenario: Optional[Scenario] = None
+) -> List[CheckResult]:
+    """工具调用长期记忆：外部工具参数须复用记忆 / 敏感参数不得复用。
+
+    对每条 TOOL 证据（content 形如 {"tool": "operationId", "args": {...}}）：
+    1. 参数记忆（x-memory.remember 标记的参数）在 TOOL 调用事件中若出现了，
+       其值与记忆键的写入值一致 → PASS；与已写入记忆值不同（没用记忆）→ FAIL；
+    2. 敏感参数（x-memory.sensitive 标记）不应在工具调用中携带/复用
+       （一次性 token/密钥）→ 出现即 FAIL，未出现 → PASS；
+    3. 工具调用缺参数记忆链（无 TOOL 事件）→ N/A。
+    """
+    if scenario is None:
+        return []
+    spec = _scenario_oas_tools(scenario)
+    if spec is None or not spec.tools:
+        return []
+
+    # 记忆键 → 最新写入值
+    memory_latest: Dict[str, str] = {}
+    for ev in store.query(type=EvidenceType.MEMORY, source=Source.AGENT):
+        key = str(ev.content.get("key", ""))
+        value = ev.content.get("value")
+        if key and value is not None:
+            memory_latest[key] = str(value)
+
+    tool_events = store.query(type=EvidenceType.TOOL, source=Source.AGENT)
+    if not tool_events:
+        return [
+            CheckResult(
+                status=Status.NA,
+                rule="tool_call_check",
+                message="场景定义了 OAS 工具契约，但未观察到任何 TOOL 调用事件（N/A）",
+            )
+        ]
+
+    results: List[CheckResult] = []
+    seen_ops: Dict[str, bool] = {}
+    for ev in tool_events:
+        content = ev.content or {}
+        operation_id = str(content.get("tool", ""))
+        args = content.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+        tool = spec.tool(operation_id)
+        if tool is None:
+            results.append(
+                CheckResult(
+                    status=Status.FAIL,
+                    rule="tool_call_check",
+                    message="工具调用事件引用了 OAS 文档中不存在的 operationId「{}」".format(
+                        operation_id
+                    ),
+                    evidence_ids=[ev.ev_id],
+                )
+            )
+            continue
+        seen_ops[operation_id] = True
+
+        # 1) x-memory.remember：参数值应与记忆键写入值一致
+        for param in tool.params:
+            if param.memory_key is None:
+                continue
+            if param.name not in args:
+                continue
+            actual = str(args[param.name])
+            expected = memory_latest.get(param.memory_key)
+            if expected is not None and _mentions(actual, expected):
+                results.append(
+                    CheckResult(
+                        status=Status.PASS,
+                        rule="tool_call_check",
+                        message="工具「{}」参数 {}={} 复用了记忆键 {}(={})".format(
+                            tool.operation_id, param.name, actual,
+                            param.memory_key, expected,
+                        ),
+                        evidence_ids=[ev.ev_id],
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        status=Status.FAIL,
+                        rule="tool_call_check",
+                        message="工具「{}」参数 {}={} 未复用记忆键 {}（期望 {}，即长期记忆未应用到工具调用）".format(
+                            tool.operation_id, param.name, actual,
+                            param.memory_key, expected or "未写入",
+                        ),
+                        evidence_ids=[ev.ev_id],
+                    )
+                )
+
+        # 2) x-memory.sensitive：敏感参数不应出现在工具调用 args 中
+        for param in tool.params:
+            if not param.sensitive:
+                continue
+            if param.name in args and str(args[param.name]) != "":
+                results.append(
+                    CheckResult(
+                        status=Status.FAIL,
+                        rule="tool_call_check",
+                        message="工具「{}」敏感参数 {} 不应在调用中携带/复用（一次性凭据泄漏）".format(
+                            tool.operation_id, param.name
+                        ),
+                        evidence_ids=[ev.ev_id],
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        status=Status.PASS,
+                        rule="tool_call_check",
+                        message="工具「{}」敏感参数 {} 未被复用，边界正确".format(
+                            tool.operation_id, param.name
+                        ),
+                        evidence_ids=[ev.ev_id],
+                    )
+                )
+
+    # 场景期望调用的工具（PROBE 描述中提及 operationId）从未被调用 → WARN
+    expected_ops = set()
+    for step in scenario.steps:
+        if getattr(step, "type", None) == StepType.PROBE:
+            for op_id in spec.tools:
+                if op_id and op_id in step.description:
+                    expected_ops.add(op_id)
+    for op_id in sorted(expected_ops - set(seen_ops)):
+        results.append(
+            CheckResult(
+                status=Status.WARN,
+                rule="tool_call_check",
+                message="探针任务提及工具「{}」但未观察到对应 TOOL 调用（工具记忆未被使用）".format(
+                    op_id
+                ),
+            )
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # 汇总入口
 # ---------------------------------------------------------------------------
 
@@ -995,6 +1164,7 @@ _RULES = [
     ("conflict_rollback_check", conflict_rollback_check),
     ("cross_file_consistency_check", cross_file_consistency_check),
     ("causality_check", causality_check),
+    ("tool_call_check", tool_call_check),
 ]
 
 

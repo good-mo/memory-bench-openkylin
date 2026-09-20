@@ -106,22 +106,31 @@ class Step:
 
 @dataclass
 class Scenario:
-    """一个评测场景（多条步骤组成的长期记忆测评流程）。"""
+    """一个评测场景（多条步骤组成的长期记忆测评流程）。
+
+    oas: 可选，OAS/OpenAPI 文档（dict 或文件路径字符串）。
+        提供后启用「外部工具调用」开发维度（M7）：
+        工具契约中的 x-memory 标记决定哪些参数复用记忆、哪些敏感参数不可复用。
+    """
 
     id: str
     name: str
     dimension: str
     seed: int
     steps: List[Step] = field(default_factory=list)
+    oas: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "id": self.id,
             "name": self.name,
             "dimension": self.dimension,
             "seed": self.seed,
             "steps": [s.to_dict() for s in self.steps],
         }
+        if self.oas is not None:
+            data["oas"] = self.oas
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scenario":
@@ -135,12 +144,14 @@ class Scenario:
         if not isinstance(data.get("steps"), list) or not data["steps"]:
             raise ValueError("Scenario.steps 必须是非空列表")
         steps = [Step.from_dict(s) for s in data["steps"]]
+        oas = data.get("oas")
         return cls(
             id=data["id"],
             name=data["name"],
             dimension=data["dimension"],
             seed=int(data["seed"]),
             steps=steps,
+            oas=oas,
         )
 
     def __repr__(self) -> str:  # pragma: no cover

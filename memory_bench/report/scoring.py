@@ -35,6 +35,7 @@ RULE_TO_DIMENSION: Dict[str, str] = {
     "conflict_rollback_check": "rollback",
     "cross_file_consistency_check": "consistency",
     "causality_check": "causality",
+    "tool_call_check": "tool",
 }
 
 DIMENSIONS: Dict[str, str] = {
@@ -48,6 +49,7 @@ DIMENSIONS: Dict[str, str] = {
     "rollback": "冲突回滚（错误值能回滚到权威值）",
     "consistency": "交叉文件一致性（多文件取值一致）",
     "causality": "时序因果（行为引用不早于记忆写入）",
+    "tool": "外部工具（OAS 契约参数复用记忆 / 敏感参数不泄漏）",
 }
 
 _SUB_RULES: Dict[str, List[str]] = {
@@ -61,6 +63,7 @@ _SUB_RULES: Dict[str, List[str]] = {
     "rollback": ["conflict_rollback_check"],
     "consistency": ["cross_file_consistency_check"],
     "causality": ["causality_check"],
+    "tool": ["tool_call_check"],
 }
 
 # ---------------------------------------------------------------------------
@@ -99,6 +102,7 @@ _FAIL_MODE_HINTS: Dict[str, str] = {
     "conflict_rollback_check": FailureMode.ERRONEOUS_PERSISTENCE.value,
     "cross_file_consistency_check": FailureMode.ERRONEOUS_PERSISTENCE.value,
     "causality_check": FailureMode.ERRONEOUS_REUSE.value,
+    "tool_call_check": FailureMode.CONFUSION.value,
 }
 
 _WARN_MODE_HINTS: Dict[str, str] = {
@@ -131,7 +135,7 @@ def classify_failure(check: CheckResult) -> str:
     low = message.lower()
     if any(tok in low for tok in ("残留", "旧值", "回滚", "最终停留", "未回滚", "取值不一致")):
         return FailureMode.ERRONEOUS_PERSISTENCE.value
-    if any(tok in low for tok in ("复用", "不应", "临时", "敏感", "过早引用")):
+    if any(tok in low for tok in ("复用", "不应", "临时", "敏感", "过早引用", "泄漏")):
         return FailureMode.ERRONEOUS_REUSE.value
     if any(tok in low for tok in ("未调用", "未观察到", "找不到", "无法验证")):
         return FailureMode.OMISSION.value

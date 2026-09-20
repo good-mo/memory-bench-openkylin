@@ -65,8 +65,17 @@ jobs:
           test -f out/ci-okconfig/report.json
           grep -q '"scoring"' out/ci-okconfig/report.json
 
+      - name: 外部工具调用场景演示（OAS 契约 + TOOL 证据）
+        run: |
+          python -m memory_bench.runner run --scenario demo_tool --agent tooldummy --seed 47 --outdir out/ci-tool
+          python -m memory_bench.runner run --scenario demo_tool --agent tooltokenreuse --seed 47 --outdir out/ci-toolbad
+          test -f out/ci-tool/manifest.json
+          grep -q '"TOOL"' out/ci-tool/evidence.ndjson
+          grep -q 'tool_call_check' out/ci-tool/report.json
+
       - name: 校验跑批摘要包含全部场景
         run: |
           test -f out/run_matrix.log
           grep -q "维度矩阵汇总" out/run_matrix.log
           grep -q "demo_ok_config/okconfig" out/run_matrix.log
+          grep -q "demo_tool/tooldummy" out/run_matrix.log

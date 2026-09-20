@@ -28,6 +28,7 @@ _BUILTIN = [
     "demo_crossfile",
     "demo_forget",
     "demo_ok_config",
+    "demo_tool",
 ]
 
 
@@ -113,6 +114,18 @@ def make_agent(name: str, seed: int):
         from agents.dummy_agent import OkConfigAmnesiaDummyAgent
 
         return OkConfigAmnesiaDummyAgent(seed=seed)
+    if name == "tooldummy":
+        from agents.dummy_agent import ToolCallDummyAgent
+
+        return ToolCallDummyAgent(seed=seed)
+    if name == "tooltokenreuse":
+        from agents.dummy_agent import ToolTokenReuseAgent
+
+        return ToolTokenReuseAgent(seed=seed)
+    if name == "toolnomemory":
+        from agents.dummy_agent import ToolNoMemoryAgent
+
+        return ToolNoMemoryAgent(seed=seed)
     if name == "openkylin":
         from agents.openkylin_adapter import OpenKylinAgent
 
@@ -120,7 +133,8 @@ def make_agent(name: str, seed: int):
     raise SystemExit(
         "未知智能体 {!r}：可选 dummy / bad / confuse / leaky / deepseek / adapter"
         " / sessiondummy / amnesia / rollback / norollback / crossfile / dirtyfile"
-        " / forget / ignoreforget / okconfig / okamnesia / openkylin".format(
+        " / forget / ignoreforget / okconfig / okamnesia / tooldummy"
+        " / tooltokenreuse / toolnomemory / openkylin".format(
             name
         )
     )
@@ -379,12 +393,16 @@ def build_parser() -> argparse.ArgumentParser:
             "ignoreforget",
             "okconfig",
             "okamnesia",
+            "tooldummy",
+            "tooltokenreuse",
+            "toolnomemory",
             "openkylin",
         ],
         help="评测智能体：dummy（好）/ bad / confuse / leaky（坏变体）/ deepseek（真实 LLM）"
         " / adapter（外部智能体）/ sessiondummy / amnesia（跨会话变化体）/"
         " rollback / norollback（冲突回滚变化体）/ crossfile / dirtyfile（交叉文件变化体）/"
-        " forget / ignoreforget（遗忘指令变化体）/ okconfig / okamnesia（openKylin 配置变化体）"
+        " forget / ignoreforget（遗忘指令变化体）/ okconfig / okamnesia（openKylin 配置变化体）/"
+        " tooldummy / tooltokenreuse / toolnomemory（外部工具调用变化体）"
         " / openkylin（openKylin 智能体框架适配器）",
     )
     p_run.add_argument(
@@ -428,6 +446,9 @@ def build_parser() -> argparse.ArgumentParser:
             "ignoreforget",
             "okconfig",
             "okamnesia",
+            "tooldummy",
+            "tooltokenreuse",
+            "toolnomemory",
             "openkylin",
         ],
         help="评测智能体",

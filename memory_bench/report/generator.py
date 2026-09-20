@@ -33,6 +33,7 @@ th { background: #f0f3f6; }
 .badge-PASS { background: #1a7f37; }
 .badge-FAIL { background: #cf222e; }
 .badge-WARN { background: #9a6700; }
+.badge-TOOL { background: #8250df; }
 .timeline { border-left: 3px solid #d0d7de; margin-left: 8px; padding-left: 16px; }
 .tl-item { margin: 10px 0; }
 .tl-item .tag { font-family: Menlo, Consolas, monospace; font-size: 12px;
@@ -66,6 +67,10 @@ def _event_summary(ev: EvidenceEvent) -> str:
         path = content.get("path")
         detail = content.get("detail", "")
         return "cmd=[{}] path=[{}] detail=[{}]".format(cmd, path or "-", detail)
+    if ev.type == EvidenceType.TOOL:
+        tool = content.get("tool", "?")
+        args = content.get("args", {})
+        return "tool=[{}] args=[{}]".format(tool, json.dumps(args, ensure_ascii=False))
     if ev.type == EvidenceType.ARTIFACT:
         path = content.get("path", "?")
         body = content.get("content", "")

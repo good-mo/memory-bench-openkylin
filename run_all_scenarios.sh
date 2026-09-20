@@ -27,6 +27,9 @@ RUNNERS=(
   "demo_forget ignoreforget"
   "demo_ok_config okconfig"
   "demo_ok_config okamnesia"
+  "demo_tool tooldummy"
+  "demo_tool tooltokenreuse"
+  "demo_tool toolnomemory"
 )
 
 if [ "${1:-}" != "--keep-out" ]; then
@@ -88,6 +91,9 @@ ORDER = [
     ("demo_forget", "ignoreforget", "遗忘指令执行(坏变体)"),
     ("demo_ok_config", "okconfig", "openKylin 配置记忆"),
     ("demo_ok_config", "okamnesia", "openKylin 配置记忆(坏变体)"),
+    ("demo_tool", "tooldummy", "外部工具调用"),
+    ("demo_tool", "tooltokenreuse", "外部工具(复用敏感令牌)"),
+    ("demo_tool", "toolnomemory", "外部工具(不读记忆)"),
 ]
 
 header = "{:<22} {:<16} {:>6} {:>6} {:>6} {:>6} {:>7}  {}".format(

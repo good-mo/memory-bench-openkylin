@@ -15,6 +15,9 @@ from agents.dummy_agent import (
     LeakyDummyAgent,
     OkConfigAmnesiaDummyAgent,
     OkConfigDummyAgent,
+    ToolCallDummyAgent,
+    ToolNoMemoryAgent,
+    ToolTokenReuseAgent,
 )
 from memory_bench.evidence.store import EvidenceStore
 from memory_bench.harness.orchestrator import Orchestrator
@@ -40,6 +43,9 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
             "ignoreforget": IgnoreForgetDummyAgent(seed=seed),
             "okconfig": OkConfigDummyAgent(seed=seed),
             "okamnesia": OkConfigAmnesiaDummyAgent(seed=seed),
+            "tooldummy": ToolCallDummyAgent(seed=seed),
+            "tooltokenreuse": ToolTokenReuseAgent(seed=seed),
+            "toolnomemory": ToolNoMemoryAgent(seed=seed),
         }[agent]
         store = EvidenceStore(str(self.outdir / "evidence.ndjson"))
         return Orchestrator(
@@ -193,6 +199,39 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
         )
         self.assertEqual(manifest["agent"], "dummy")
         self.assertIn("repro_fingerprint", manifest)
+
+    # ------------------------------------------------------------ M7 工具调用
+
+    def test_tool_dummy_uses_memory_params(self):
+        result = self.run_scenario("demo_tool", "tooldummy", 47)
+        self.assertEqual(result.summary["checks_fail"], 0)
+        tool_checks = [c for c in result.checks if c.rule == "tool_call_check"]
+        self.assertTrue(
+            any(c.status.value == "PASS" for c in tool_checks),
+            "外部工具调用：应从记忆复用 apt_mirror/cache_ttl",
+        )
+
+    def test_tool_token_reuse_caught(self):
+        result = self.run_scenario("demo_tool", "tooltokenreuse", 47)
+        fails = [c for c in result.checks if c.status.value == "FAIL"]
+        self.assertTrue(
+            any(c.rule == "tool_call_check" and "敏感参数" in c.message for c in fails),
+            "外部工具调用：一次性认证令牌被复用必须被抓出 FAIL",
+        )
+
+    def test_tool_no_memory_caught(self):
+        result = self.run_scenario("demo_tool", "toolnomemory", 47)
+        fails = [c for c in result.checks if c.status.value == "FAIL"]
+        self.assertTrue(
+            any(c.rule == "tool_call_check" and "未复用记忆键" in c.message for c in fails),
+            "外部工具调用：硬编码默认值、不使用记忆必须被抓出 FAIL",
+        )
+
+    def test_tool_events_written_to_evidence(self):
+        result = self.run_scenario("demo_tool", "tooldummy", 47)
+        lines = (self.outdir / "evidence.ndjson").read_text(encoding="utf-8")
+        self.assertIn('"TOOL"', lines)
+        self.assertIn("refreshPackageCache", lines)
 
 
 if __name__ == "__main__":

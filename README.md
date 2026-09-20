@@ -1,45 +1,49 @@
 # memory-bench-openkylin
 
-面向 openKylin 操作系统智能体长期记忆能力的自动化评测 Benchmark（M1–M6）。
+面向 openKylin 操作系统智能体长期记忆能力的自动化评测 Benchmark（M1–M7）。
 
 ## 简介
 
-「证据驱动」的智能体长期记忆评测框架：把对话、记忆操作、行动轨迹、文件产物统一成
+「证据驱动」的智能体长期记忆评测框架：把对话、记忆操作、行动轨迹、文件产物、工具调用统一成
 带时间戳的证据事件流（NDJSON），再用**跨证据一致性校验**自动判断智能体是否真的记住了、
 真的用了、真的更新了。M1 提供证据模型 + 最小 harness + 脚本化 dummy 智能体 +
-演示场景 + 报告输出；M2–M6 在此基础上补齐真实 LLM 智能体、场景库扩充、更多
+演示场景 + 报告输出；M2–M7 在此基础上补齐真实 LLM 智能体、场景库扩充、更多
 一致性规则、规模化跑批与鲁棒性分析、多维评分与失败模式归因、评测追踪与可复现性
-校验、遗忘指令与面向 openKylin 操作系统的配置记忆场景（详见「里程碑状态」）。
+校验、遗忘指令与面向 openKylin 操作系统的配置记忆场景、以及 OAS/OpenAPI 文档标记驱动的
+外部工具调用长期记忆（详见「里程碑状态」）。
 
 ## 背景
 
 - 长期记忆是智能体在操作系统环境中提供持续性服务的关键能力：用户偏好、动态配置、
   历史决策都必须长期保留、按需使用、及时更新。
 - 传统评测只看对话答复或单一结果，无法抓出「口头承诺但行为没兑现」的作弊式遗忘。
-- 本框架把「说」（DIALOGUE）、「记」（MEMORY）、「做」（ACTION）、「产物」（ARTIFACT）
-  全部固化为证据，用九条一致性规则交叉印证，自动生成 PASS / FAIL / WARN 结论。
+- 本框架把「说」（DIALOGUE）、「记」（MEMORY）、「做」（ACTION）、「产物」（ARTIFACT）、
+  「调工具」（TOOL）全部固化为证据，用十条一致性规则交叉印证，自动生成
+  PASS / FAIL / WARN 结论。
 
 ## M1–M5 范围与模块
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| 证据模型 | `memory_bench/evidence/model.py` | 五类证据事件 + 序列化/校验 |
+| 证据模型 | `memory_bench/evidence/model.py` | 六类证据事件（含 TOOL）+ 序列化/校验 |
 | 证据存储 | `memory_bench/evidence/store.py` | NDJSON 追加权威存储 + sqlite3 查询索引 |
-| 一致性校验 | `memory_bench/evidence/consistency.py` | 九条规则（见下） |
-| 场景建模 | `memory_bench/scenarios/types.py` | Scenario / Step / Fact 数据模型与 JSON 加载 |
-| 内置场景 | `memory_bench/scenarios/library.py` | 十二个演示场景（六维 + 跨会话/回滚/交叉文件 + 遗忘指令/openKylin 配置） |
+| 一致性校验 | `memory_bench/evidence/consistency.py` | 十条规则（见下） |
+| OAS/OpenAPI 解析 | `memory_bench/tools/oas.py` | 工具契约解析：`x-memory.remember` / `x-memory.sensitive` 标记（M7，新） |
+| 场景建模 | `memory_bench/scenarios/types.py` | Scenario / Step / Fact 数据模型与 JSON 加载（含可选 `oas` 契约字段） |
+| 内置场景 | `memory_bench/scenarios/library.py` | 十三个演示场景（六维 + 跨会话/回滚/交叉文件 + 遗忘指令/openKylin 配置 + 外部工具） |
 | 沙箱 | `memory_bench/harness/sandbox.py` | 工作区快照 / 回滚 |
 | OS 审计采集 | `memory_bench/audit/` | systemd journal / auditd / 进程快照 / 工作区文件差异 / 离线重放（新） |
 | 智能体协议 | `memory_bench/harness/agent.py` | Agent 抽象 + AgentContext 证据发射 + 跨会话状态钩子 |
 | 编排器 | `memory_bench/harness/orchestrator.py` | 注入 → 演化 → 探针 → 固化 + 跨会话调度 + 审计联动 |
 | 报告 | `memory_bench/report/generator.py` | JSON + 自包含 HTML（内联 CSS，含遗忘曲线 + 能力维度评分卡片） |
 | 遗忘曲线 | `memory_bench/report/forgetting.py` | 按时间窗聚合记忆引用强度（M4） |
-| 多维评分 | `memory_bench/report/scoring.py` | 10 个能力维度画像 + 5 种失败模式归因 + 综合评分（M6，新） |
+| 多维评分 | `memory_bench/report/scoring.py` | 11 个能力维度画像（含外部工具）+ 5 种失败模式归因 + 综合评分（M6/M7） |
 | 评测追踪 | `memory_bench/report/tracking.py` | run manifest / 可复现指纹（sha256）/ NDJSON 批次清单 / 可复现性校验（M6，新） |
+| 工具调用记忆 | `memory_bench/evidence/consistency.py` `tool_call_check` | OAS 契约标记参数须复用记忆键值、敏感参数不得泄漏进工具调用（M7，新） |
 | 鲁棒性 | `memory_bench/robustness.py` | seed 扰动矩阵与稳定率聚合（M5） |
 | CLI | `memory_bench/runner.py` | `run` / `bench` / `serve` 三个子命令 |
-| 演示智能体 | `agents/` | Dummy 系列 + DeepSeek + 外部 Adapter + openKylin 适配器 + 遗忘/openKylin 配置变体（见下） |
-| 测试 | `tests/` | 标准库 unittest，11 个测试文件 120 用例 |
+| 演示智能体 | `agents/` | Dummy 系列 + DeepSeek + 外部 Adapter + openKylin 适配器 + 遗忘/openKylin 配置/工具调用变体（见下） |
+| 测试 | `tests/` | 标准库 unittest，12 个测试文件 136 用例 |
 
 ## 快速开始
 
@@ -83,11 +87,21 @@ python3 -m memory_bench.runner run --scenario demo_forget --agent forget --seed 
 # M6 openKylin 配置记忆：跨三天会话保留软件源/SSH 端口/主题偏好
 python3 -m memory_bench.runner run --scenario demo_ok_config --agent okconfig --seed 43
 
-# 完整 21 组好坏对照矩阵（每个组合输出综合评分 + 失败模式）
+# M7 外部工具调用：OAS 契约标记参数须复用记忆（mirror/ttl），敏感令牌不得泄漏进工具调用
+python3 -m memory_bench.runner run --scenario demo_tool --agent tooldummy --seed 42
+
+# M7 坏变体对照：`toolnomemory`（不读记忆）/ `tooltokenreuse`（复用敏感令牌）会产出 FAIL
+python3 -m memory_bench.runner run --scenario demo_tool --agent tooltokenreuse --seed 42
+
+# 完整 24 组好坏对照矩阵（每个组合输出综合评分 + 失败模式）
 bash run_all_scenarios.sh
 ```
 
-所有新规则、新智能体清单见「一致性规则（九条）」与「演示智能体」。
+所有新规则、新智能体清单见「一致性规则（十条）」与「演示智能体」。
+
+因为工具调用长期记忆要回答的问题："配置了外部工具契约后，工具参数是否从记忆复用、敏感参数是否守住边界"。M7 用 `scenario.oas` 携带 OpenAPI 文档（JSON 文件路径或内嵌 dict），`tool_call_check` 按文档中
+`x-memory.remember` / `x-memory.sensitive` 扩展标记生成检查项。所有检查结果进入 `memory_bench/report/scoring.py`
+的 `tool` 维度（10 → 11 个能力维度），失败自动归因（漏复用 → `omission`，敏感泄漏 → `erroneous_reuse`）。
 
 运行产物位于 `out/<scenario_id>/`：
 
@@ -106,8 +120,9 @@ bash run_all_scenarios.sh
 - **失败模式归因**：把 FAIL/WARN 细分识别为 `omission`（遗漏）、`confusion`（混淆）、
   `erroneous_persistence`（错误持久化）、`erroneous_reuse`（错误复用），区别于
   `correct`（正确）与 `na`（不适用）——不依赖人工读文案，可自动聚合
-- **10 个能力维度画像**：记忆保留 / 动态更新 / 记忆调用 / 相近区分 / 边界保密 /
-  任务复用 / 跨会话持久化 / 冲突回滚 / 交叉文件一致性 / 时序因果，各自单独评分
+- **11 个能力维度画像**：记忆保留 / 动态更新 / 记忆调用 / 相近区分 / 边界保密 /
+  任务复用 / 跨会话持久化 / 冲突回滚 / 交叉文件一致性 / 时序因果 / 外部工具，各自单独评分
+  （M7 新增 `tool` 工具调用维度：`tool_call_check` 结果并入，见「一致性规则」第 10 条）
 - **可复现指纹**：`sha256(场景定义 + 智能体 + seed + 规则版本)`，同一提交、同一参数
   必然产出同一指纹；`bench` 逐 seed 打印指纹与评分，`compare_manifests` 可校验两次
   运行是否可比（可复现性）
@@ -133,22 +148,24 @@ PY
 memory-bench-openkylin/
 ├── README.md
 ├── pyproject.toml              # 最小元数据（>=3.8，仅标准库）
-├── run_all_scenarios.sh        # 六维 + 扩展场景的 17 组好坏对照一键矩阵
+├── run_all_scenarios.sh        # 六维 + 扩展场景的 24 组好坏对照一键矩阵
 ├── .github/workflows/ci.yml    # M5 CI：多版本 Python 跑测试 + 矩阵 + bench
 ├── memory_bench/
-│   ├── evidence/               # 证据模型 / 存储 / 一致性校验（九条规则）
+│   ├── evidence/               # 证据模型 / 存储 / 一致性校验（十条规则）
+│   ├── tools/                  # OAS/OpenAPI 工具契约解析（M7）
 │   ├── audit/                  # OS 侧审计采集层：journal/auditd/进程/文件差异/重放
 │   ├── scenarios/              # 场景建模 / 内置场景库
 │   ├── harness/                # 沙箱 / 智能体协议 / 编排器（跨会话调度 + 审计联动）
 │   ├── report/                 # 报告生成（含遗忘曲线 forgetting.py）
 │   ├── robustness.py           # M5 seed 扰动矩阵与稳定率聚合
 │   └── runner.py               # CLI（run / bench / serve）
-├── agents/dummy_agent.py       # 演示智能体（好/坏系列共 12 个）
+├── agents/dummy_agent.py       # 演示智能体（好/坏系列共 17 个）
 ├── agents/deepseek_agent.py    # 真实 LLM 智能体（OpenAI 兼容 HTTP）
 ├── agents/adapter_agent.py     # 通用外部智能体适配器（JSONL 协议）
 ├── agents/openkylin_adapter.py # openKylin 智能体框架适配器（HTTP/CLI + 审计联动）
 ├── scenarios/*.json            # 演示场景定义（运行时优先磁盘文件）
-├── tests/                      # unittest 测试（86 用例）
+├── scenarios/openapi/*.json    # OAS/OpenAPI 工具契约文档（M7）
+├── tests/                      # unittest 测试（136 用例）
 └── examples/evidence_sample.ndjson  # 人工示例证据
 ```
 
@@ -160,11 +177,12 @@ memory-bench-openkylin/
 | `MEMORY` | 记忆操作 | `{"op": "WRITE", "key": "server_ip", "value": "192.168.1.100"}` |
 | `ACTION` | 行动轨迹 | `{"command": "ssh kylin@192.168.1.100 -p 22", "path": ...}` |
 | `ARTIFACT` | 文件产物 | `{"path": "deploy.txt", "content": "ip=192.168.1.100"}` |
+| `TOOL` | 工具调用 | `{"tool": "refreshPackageCache", "op": "refresh", "args": {"mirror": ..., "auth_token": ...}}`（M7） |
 | `CHECKPOINT` | 评测锚点 | `{"phase": "scenario_start"}` |
 
 所有事件统一字段：`ev_id / type / ts(ISO8601 UTC) / session / task / source(USER|AGENT|HARNESS) / content / metadata`。
 
-## 一致性规则（九条）
+## 一致性规则（十条）
 
 1. **say_do_check（说—做一致性）**：扫描 AGENT 对话中的「已备份/已创建/已删除/已安装/已复制/已移动/已写入/已修改」类声明，
    提取目标路径，到 ACTION/ARTIFACT 证据中交叉验证。找到即 PASS，找不到即 FAIL。
@@ -183,8 +201,55 @@ memory-bench-openkylin/
 8. **cross_file_consistency_check（交叉文件一致性）**：同一记忆键在多个 ARTIFACT 文件中
    取值必须一致（M4）。
 9. **causality_check（时序因果性）**：行为对某值的引用不得早于该值被写入记忆的时间（M4）。
+10. **tool_call_check（工具调用—记忆一致性，M7）**：对每个 TOOL 事件，按 OAS 文档中的
+    `x-memory.remember` 标记检查工具参数是否复用了记忆键值（未复用/不一致 → FAIL）；
+    按 `x-memory.sensitive` 标记检查敏感参数是否被携带进工具调用（泄漏 → FAIL）；
+    无 TOOL 事件 → N/A；探针提及工具但无调用 → WARN。
 
 匹配采用词边界判定，避免 `22` 误命中 `2222`。
+
+## OAS/OpenAPI 文档标记（M7）
+
+外部工具契约通过 OpenAPI 3.x 文档声明，随场景的 `"oas"` 字段携带（JSON 文件路径或内嵌 dict）。
+在**工具参数**上打两个扩展标记，`tool_call_check` 即据此校验「工具调用 ↔ 长期记忆」：
+
+```json
+{
+  "paths": {
+    "/cache/refresh": {
+      "post": {
+        "operationId": "refreshPackageCache",
+        "parameters": [
+          {"name": "mirror", "in": "query",
+           "x-memory": {"remember": "apt_mirror"}},
+          {"name": "ttl", "in": "query",
+           "x-memory": {"remember": "cache_ttl"}}
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "auth_token": {
+                    "type": "string",
+                    "x-memory": {"sensitive": true}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+- `x-memory.remember: "<memory_key>"`：该参数须复用记忆键的当前值；
+- `x-memory.sensitive: true`：该参数为一次性/敏感凭据，不得出现在工具调用 args 中。
+`memory_bench/tools/oas.py` 提供 `parse_oas` / `load_oas` 解析；演示样例见
+`scenarios/openapi/ok-cache-service.json`（触发词：`refreshPackageCache`、`调用`、`工具`）。
 
 ## Agent 接入约定
 
@@ -202,7 +267,7 @@ MEMORY 事件 `content` 固定结构（一致性规则解析的基础）：
 
 **动机**：智能体自证（AGENT 主动 emit）可能「口说无凭」。OS 审计采集层
 把系统侧的客观行为固化为证据（`source=HARNESS`），与智能体自证交叉印证，
-作为九条一致性规则的独立证据来源。审计证据带 `metadata.audit_backend`
+作为十条一致性规则的独立证据来源。审计证据带 `metadata.audit_backend`
 标记来源，并可写入同一 `EvidenceStore` 参与 say_do / memory-behavior /
 time-update / cross-file / causality 等规则校验。
 
@@ -282,6 +347,9 @@ MK_OK_SYSTEM_PROMPT / MK_OK_PROMPT_PREFIX / MK_OK_OUTPUT`。
 | `ignoreforget` | 口头答应遗忘却继续复用临时令牌 | 坏（M6） |
 | `okconfig` | 跨三天会话保留 openKylin 软件源/SSH 端口/UKUI 主题偏好 | 好（M6） |
 | `okamnesia` | 会话切换即清空 openKylin 系统配置记忆 | 坏（M6） |
+| `tooldummy` | 按 OAS 契约调用工具，复用记忆键值、不泄漏敏感令牌 | 好（M7） |
+| `tooltokenreuse` | 工具调用中把一次性敏感令牌 `auth_token` 再次带上 | 坏（M7） |
+| `toolnomemory` | 不读记忆，用硬编码默认值调工具 | 坏（M7） |
 | `bad` / `confuse` / `leaky` | M1 坏变体：旧值残留 / 相近混淆 / 敏感泄漏 | 坏 |
 
 新场景与智能体可直接放入 `scenarios/*.json` / `agents/`（见 `memory_bench/runner.py`
@@ -297,7 +365,7 @@ MK_OK_SYSTEM_PROMPT / MK_OK_PROMPT_PREFIX / MK_OK_OUTPUT`。
 | M4 | 交叉文件一致性 + 时序因果性 + 遗忘曲线统计 | ✅ 已完成 |
 | M5 | 规模化跑批（bench）+ seed 扰动鲁棒性 + CI | ✅ 已完成 |
 | M6 | 多维评分 + 失败模式归因 + 评测追踪 + 遗忘指令 + openKylin 配置场景 | ✅ 已完成 |
-| M7 | 开放接入：OAS/OpenAPI 文档标记 + 外部工具（工具调用的长期记忆） | 🚧 规划中 |
+| M7 | 开放接入：OAS/OpenAPI 文档标记 + 外部工具（工具调用的长期记忆） | ✅ 已完成 |
 
 ## 许可与说明
 

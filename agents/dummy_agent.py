@@ -591,3 +591,99 @@ class OkConfigAmnesiaDummyAgent(OkConfigDummyAgent):
     def load_state(self, ctx: AgentContext, session: str) -> bool:
         self.memory = {}
         return True
+
+
+class ToolCallDummyAgent(DummyAgent):
+    """外部工具调用智能体（好）：按 OAS 契约调用 refreshPackageCache。
+
+    用于外部工具（external-tool）维度（M7）：工具参数 `mirror`/`ttl` 在 OAS 里
+    以 x-memory.remember 标记为应从长期记忆取值，智能体在探针任务中从记忆
+    读取默认值填充工具调用参数，且不复用一次性认证令牌（x-memory.sensitive），
+    从而通过 tool_call_check。
+    """
+
+    name = "tooldummy"
+
+    def act(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        if any(token in user_message for token in ("refreshPackageCache", "调用", "工具")):
+            self._handle_probe(ctx, user_message, step_name)
+            return
+        super().act(ctx, user_message, step_name)
+
+    def _handle_probe(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        mirror = self._find_value("apt_mirror")
+        ttl = self._find_value("cache_ttl")
+        if "refreshPackageCache" in user_message and mirror and ttl:
+            self._emit_tool_call(
+                ctx=ctx,
+                step_name=step_name,
+                operation_id="refreshPackageCache",
+                args={"mirror": mirror, "ttl": ttl},
+            )
+            return
+        super()._handle_probe(ctx, user_message, step_name)
+
+    def _emit_tool_call(
+        self, ctx: AgentContext, step_name: str, operation_id: str, args: dict
+    ) -> EvidenceEvent:
+        ev = ctx.emit(
+            EvidenceType.TOOL,
+            {"tool": operation_id, "args": args, "note": "OAS 契约驱动的工具调用"},
+            task=step_name,
+        )
+        self._reply(ctx, step_name, "已调用 {op} 工具".format(op=operation_id))
+        return ev
+
+
+class ToolTokenReuseAgent(ToolCallDummyAgent):
+    """工具敏感令牌复用智能体（坏）：工具调用时把一次性认证令牌一起带上。
+
+    用于外部工具维度 FAIL 演示：一次性认证令牌（x-memory.sensitive）本不应再
+    被用于工具调用，它却把 token 拼进调用参数，被 tool_call_check 抓出 FAIL。
+    """
+
+    name = "tooltokenreuse"
+
+    def _handle_probe(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        mirror = self._find_value("apt_mirror")
+        ttl = self._find_value("cache_ttl")
+        token = self._find_tmp_value()
+        if "refreshPackageCache" in user_message and mirror and ttl:
+            args = {"mirror": mirror, "ttl": ttl}
+            if token:
+                args["auth_token"] = token
+            self._emit_tool_call(ctx, step_name, "refreshPackageCache", args)
+            return
+        super()._handle_probe(ctx, user_message, step_name)
+
+    def _find_tmp_value(self) -> Optional[str]:
+        for key, value in self.memory.items():
+            low = key.lower()
+            if key.startswith("tmp_") or any(
+                marker in low for marker in ("token", "password", "secret")
+            ):
+                return str(value)
+        return None
+
+
+class ToolNoMemoryAgent(ToolCallDummyAgent):
+    """工具调用不读记忆智能体（坏）：使用硬编码默认值，忽略记忆里的工具参数。
+
+    用于外部工具维度 FAIL 演示：OAS 标记 mirror/ttl 应从记忆取值，它却用
+    固定的硬编码值调用工具，被 tool_call_check 抓出「未复用记忆」FAIL。
+    """
+
+    name = "toolnomemory"
+
+    _HARDCODED = {"mirror": "http://hardcoded.invalid", "ttl": "60"}
+
+    def _handle_probe(self, ctx: AgentContext, user_message: str, step_name: str) -> None:
+        if "refreshPackageCache" in user_message:
+            self._emit_tool_call(
+                ctx=ctx,
+                step_name=step_name,
+                operation_id="refreshPackageCache",
+                args=dict(self._HARDCODED),
+            )
+            return
+        super()._handle_probe(ctx, user_message, step_name)
