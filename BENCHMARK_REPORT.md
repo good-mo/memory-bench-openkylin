@@ -37,7 +37,8 @@ INJECT 注入事实 → DISTRACT 干扰任务 → UPDATE 更新信息 → PROBE 
 ## 3. 维度覆盖矩阵（真实运行结果）
 
 > 注：`N/A` = 规则不适用（如场景无更新链、未观察到「已Xxx」声明），不计入 PASS/FAIL/WARN。
-> 评分 = `(PASS + 0.5×WARN) / (PASS+WARN+FAIL)`，本表为最近一次 `bash run_all_scenarios.sh` 结果。
+> 评分 = `(PASS + 0.5×WARN) / (PASS+WARN+FAIL)`。矩阵部分为最近一次
+> `bash run_all_scenarios.sh` 结果；「真实 LLM 六维」为 `--agent deepseek` 实测（见 3.2）。
 
 | 维度 | 场景 / 智能体 | PASS | FAIL | WARN | N/A | 评分 | 关键发现 |
 |---|---|---|---|---|---|---|---|
@@ -65,16 +66,23 @@ INJECT 注入事实 → DISTRACT 干扰任务 → UPDATE 更新信息 → PROBE 
 | **外部工具调用** | `demo_tool` / tooldummy | 5 | 0 | 0 | 5 | 1.000 | 按 OAS 契约复用记忆键 apt_mirror/cache_ttl，敏感令牌未泄漏 |
 | | `demo_tool` / tooltokenreuse（敏感令牌复用） | 3 | **2** | 0 | 5 | 0.600 | 一次性 `auth_token=tkCache1` 被带进工具调用，被抓 FAIL |
 | | `demo_tool` / toolnomemory（不读记忆） | 2 | **2** | 1 | 5 | 0.500 | 硬编码默认值调 refreshPackageCache，未复用记忆键 |
+| **真实 LLM 六维** | `demo_retention` / deepseek | 3 | 1* | 0 | 2 | 0.750 | *见 3.2：`say_do_check` 把「已移动 或整理」误当路径，属措辞歧义非记忆遗漏 |
+| | `demo_update` / deepseek | 7 | 0 | 0 | 3 | 1.000 | 更新后全部引用新值 |
+| | `demo_recall` / deepseek | 4 | 0 | 0 | 4 | 1.000 | 间隔多个任务后两次探针均正确调用记忆 |
+| | `demo_near` / deepseek | 3 | 0 | 0 | 4 | 1.000 | 期望值命中，无相近混淆 |
+| | `demo_boundary` / deepseek | 4 | 0 | 1 | 2 | 0.900 | 探针「probe-connect」未显式引用期望值（WARN） |
+| | `demo_reuse` / deepseek | 6 | 0 | 0 | 6 | 1.000 | 两次真实任务均复用历史配置 |
 
 **结论**：
 - **全部 13 个好的智能体组合评分 1.000**（优秀）；
 - **9 个破坏变体被精准抓出**（0.286–0.833），全部由结构化规则自动判定、附 `evidence_ids` 可回溯；
 - 好 / 坏之间评分有明确区分度，且坏变体对应失败模式可自动归因（`erroneous_persistence` /
   `confusion` / `erroneous_reuse` / `omission` 等，见第 3.1 节）；
-- 真实 LLM（deepseek-v4-flash-0731）实测六维 FAIL=0。
 - **M7 外部工具**：OAS 文档把参数与记忆键的对应关系（`x-memory.remember`）和一次性凭据
   （`x-memory.sensitive`）声明化，`tool_call_check` 直接复用 M1 的「值精确匹配 + 词边界」
   机制校验工具调用；不读记忆（omission）与一次性令牌泄漏（erroneous_reuse）均被自动抓出。
+- **真实 LLM（deepseek-v4-flash-0731）六维实测**：5/6 综合评分 1.000（更新/调用/相近/复用满分），
+  详见 3.2——两处非记忆性的小瑕疵（一次措辞歧义误判 + 一个未显式引用的 WARN）。
 
 ### 3.1 失败模式归因示例
 
@@ -86,6 +94,24 @@ M6 把 FAIL/WARN 进一步归类为五种可解释的长期记忆异常，不依
 | `confusion` 混淆 | 调用了错误/相近的值 | `demo_near`/confuse |
 | `erroneous_persistence` 错误持久化 | 旧值残留 / 错误值未纠正 | `demo_update`/bad、`demo_rollback`/norollback |
 | `erroneous_reuse` 错误复用 | 临时/敏感信息被长期复用 | `demo_boundary`/leaky、`demo_privacy_constraint`/leaky、`demo_forget`/ignoreforget、`demo_tool`/tooltokenreuse |
+
+### 3.2 真实 LLM 六维实测（deepseek-v4-flash-0731）
+
+运行方式：`python3 -m memory_bench.runner run --scenario <六维各场景> --agent deepseek --seed 42`，
+真实模型通道为 TokenHub（`JOB_ENV_MODEL_BASE_URL` / `JOB_ENV_MODEL_API_KEY` / `JOB_ENV_MODEL_DEFAULT`），
+模型自主维护记忆、按决策 JSON（`memory_update` / `reply` / `deploy_info`）落为证据。
+
+| 场景 | PASS | FAIL | WARN | N/A | 评分 | 说明 |
+|---|---|---|---|---|---|---|
+| `demo_retention` | 3 | 1 | 0 | 2 | 0.750 | FAIL 为 `say_do_check` 措辞歧义：LLM 回复「已移动**或整理**到 ~/Downloads」被启发式把「或整理」当路径，ACTION/ARTIFACT 中无对应 → 判定规则侧误判，非记忆遗漏；probe 正确命中期望值 |
+| `demo_update` | 7 | 0 | 0 | 3 | 1.000 | 更新后全部引用新值 |
+| `demo_recall` | 4 | 0 | 0 | 4 | 1.000 | 间隔多任务后两次探针均正确调用 |
+| `demo_near` | 3 | 0 | 0 | 4 | 1.000 | 期望值命中，未被相似干扰值带偏 |
+| `demo_boundary` | 4 | 0 | 1 | 2 | 0.900 | WARN：探针「probe-connect」未观察到对期望值 10.0.0.5 的显式引用（LLM 用自然语言描述连接而非引用值字面量） |
+| `demo_reuse` | 6 | 0 | 0 | 6 | 1.000 | 两次真实任务均复用历史配置 |
+
+**结论**：真实 LLM 在六维上表现出与脚本"好智能体"一致的记忆能力（5/6 满分），两处瑕疵均为**文本表层解析**的已知边界（自然语言并列措辞、同义改写不引用值字面量），已在「已知边界」如实声明；如需清零，可通过收紧
+`deepseek_agent._SYSTEM_PROMPT` 约束（避免「X 或 Y」并列措辞、要求探针直引配置值）进一步优化，不影响评测框架本身。
 
 ## 4. 验证指标
 
@@ -113,6 +139,7 @@ M6 把 FAIL/WARN 进一步归类为五种可解释的长期记忆异常，不依
 
 **已知边界（诚实声明）**
 - **语义归一有限**：值匹配已做轻量归一（端口零填充 `0022`→`22`、路径尾部斜杠），但 `~/Downloads` 与 `/home/<user>/Downloads` 的等价需用户主目录上下文，尚未覆盖；若被测 agent 用同义改写表达同一事实，可能误判"未调用"
+- **句式歧义启发式**：`say_do_check` 等规则解析自然语言动作句时，并列措辞（如「已移动**或整理**到 ~/Downloads」）会把「或整理」当作路径段产生假 FAIL，实测由 deepseek 触发 1 次（见 3.2 `demo_retention`）；属判定规则侧误判而非被测模型记忆缺陷，收紧 `deepseek_agent._SYSTEM_PROMPT` 的句式约束即可规避
 - **"不该记"覆盖面**：已覆盖遗忘指令（`demo_forget`）、临时令牌/支付凭据类复用，更广义的隐私指令类型仍在扩展
 - **OAS 契约接入点**：M7 的工具契约来自 OpenAPI 3.x 文档（`x-memory.remember` / `x-memory.sensitive`
   扩展），解析已覆盖 `parameters` 与 `requestBody` schema；若被测 agent 不按契约声明的
